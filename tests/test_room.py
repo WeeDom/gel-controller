@@ -13,10 +13,10 @@ class TestRoomInitialization:
 
     def test_room_initialization(self):
         """Room starts with no cameras, no detectors, default empty state."""
-        room = Room(room_id="room1", name="Living Room")
+        room = Room(room_id="room1", name="Gents")
 
         assert room.get_room_id() == "room1"
-        assert room.get_name() == "Living Room"
+        assert room.get_name() == "Gents"
         assert room.get_state() == "empty"
         assert len(room.get_cameras()) == 0
         assert len(room.get_person_detectors()) == 0

@@ -17,7 +17,7 @@ class TestCompleteWorkflow:
     def test_complete_workflow(self, capsys):
         """Person enters → cameras off → person leaves → cameras on."""
         controller = RoomController()
-        room = Room(room_id="room1", name="Living Room")
+        room = Room(room_id="room1", name="Gents")
         camera1 = Camera(name="Camera 1", room_id="room1")
         camera2 = Camera(name="Camera 2", room_id="room1")
         detector = PersonDetector(name="Detector 1", host="192.168.1.189", port=6053)
@@ -71,13 +71,13 @@ class TestTwoRoomsIndependent:
         """Room A occupied, Room B empty behave independently."""
         controller = RoomController()
 
-        # Room A - Living Room
-        room_a = Room(room_id="room_a", name="Living Room")
+        # Room A -Gents
+        room_a = Room(room_id="room_a", name="Gents")
         camera_a = Camera(name="Camera A", room_id="room_a")
         detector_a = PersonDetector(name="Detector A", host="192.168.1.189", port=6053)
 
-        # Room B - Bedroom
-        room_b = Room(room_id="room_b", name="Bedroom")
+        # Room B - Ladies
+        room_b = Room(room_id="room_b", name="Ladies")
         camera_b = Camera(name="Camera B", room_id="room_b")
         detector_b = PersonDetector(name="Detector B", host="192.168.1.190", port=6053)
 

@@ -24,8 +24,8 @@ class TestRoomControllerInitialization:
     def test_controller_adds_rooms(self):
         """Can add multiple rooms."""
         controller = RoomController()
-        room1 = Room(room_id="room1", name="Living Room")
-        room2 = Room(room_id="room2", name="Bedroom")
+        room1 = Room(room_id="room1", name="Gents")
+        room2 = Room(room_id="room2", name="Ladies")
 
         controller.add_room(room1)
         controller.add_room(room2)
@@ -41,8 +41,8 @@ class TestRoomControllerCoordination:
     def test_controller_coordinates_rooms(self):
         """Manages multiple rooms independently."""
         controller = RoomController()
-        room1 = Room(room_id="room1", name="Living Room")
-        room2 = Room(room_id="room2", name="Bedroom")
+        room1 = Room(room_id="room1", name="Gents")
+        room2 = Room(room_id="room2", name="Ladies")
 
         controller.add_room(room1)
         controller.add_room(room2)
