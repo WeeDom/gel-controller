@@ -105,7 +105,7 @@ class TestRoomPersonDetectorManagement:
     def test_room_add_person_detector(self):
         """Add person detector to room."""
         room = Room(room_id="room1", name="Test Room")
-        detector = PersonDetector(name="Detector 1", device_pattern="seeed")
+        detector = PersonDetector(name="Detector 1", host="192.168.1.189", port=6053)
 
         room.add_person_detector(detector)
 
@@ -115,8 +115,8 @@ class TestRoomPersonDetectorManagement:
     def test_room_add_multiple_person_detectors(self):
         """Add multiple person detectors to room."""
         room = Room(room_id="room1", name="Test Room")
-        detector1 = PersonDetector(name="Detector 1", device_pattern="seeed")
-        detector2 = PersonDetector(name="Detector 2", device_pattern="seeed")
+        detector1 = PersonDetector(name="Detector 1", host="192.168.1.189", port=6053)
+        detector2 = PersonDetector(name="Detector 2", host="192.168.1.190", port=6053)
 
         room.add_person_detector(detector1)
         room.add_person_detector(detector2)
@@ -126,7 +126,7 @@ class TestRoomPersonDetectorManagement:
     def test_room_remove_person_detector(self):
         """Remove person detector from room."""
         room = Room(room_id="room1", name="Test Room")
-        detector = PersonDetector(name="Detector 1", device_pattern="seeed")
+        detector = PersonDetector(name="Detector 1", host="192.168.1.189", port=6053)
 
         room.add_person_detector(detector)
         assert len(room.get_person_detectors()) == 1

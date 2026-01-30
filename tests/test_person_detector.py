@@ -234,6 +234,9 @@ class TestPersonDetectorHeartbeatHandling:
         detector = PersonDetector(name="Detector 1", host="192.168.1.189", port=6053)
         detector.set_room(room)
 
+        # Set the heartbeat sensor key (normally done during connect)
+        detector._heartbeat_sensor_key = 1
+
         # Simulate heartbeat state from ESPHome API
         state = Mock()
         state.key = 1  # Heartbeat sensor key

@@ -14,6 +14,14 @@ def mock_aioesphomeapi():
     with patch('aioesphomeapi.APIClient') as mock_client_class:
         mock_client = MagicMock()
 
+        # Create proper mock entities with actual string attributes
+        class MockEntity:
+            def __init__(self, object_id, key, name, unique_id):
+                self.object_id = object_id
+                self.key = key
+                self.name = name
+                self.unique_id = unique_id
+
         # Mock async methods
         mock_client.connect = AsyncMock()
         mock_client.disconnect = AsyncMock()
@@ -25,14 +33,14 @@ def mock_aioesphomeapi():
         })
         mock_client.list_entities_services = AsyncMock(return_value=(
             [
-                # Mock sensor entities
-                Mock(
+                # Mock sensor entities with proper string attributes
+                MockEntity(
                     object_id='real_time_heart_rate',
                     key=1,
                     name='Real-time heart rate',
                     unique_id='sensor-real_time_heart_rate'
                 ),
-                Mock(
+                MockEntity(
                     object_id='distance_to_detection_object',
                     key=2,
                     name='Distance to detection object',
