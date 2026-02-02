@@ -2,3 +2,5 @@ secrets.yaml
 venv
 __pycache__
 *.pyc
+## esp noise
+.esphome

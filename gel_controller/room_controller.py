@@ -19,7 +19,6 @@ class RoomController:
     - Starting/stopping all cameras and detectors
     - Graceful shutdown
     """
-
     def __init__(self):
         """Initialize the RoomController with empty room list."""
         self._rooms: List['Room'] = []
