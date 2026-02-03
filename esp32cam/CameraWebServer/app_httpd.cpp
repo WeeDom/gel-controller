@@ -48,6 +48,40 @@ static const char *_STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %
 httpd_handle_t stream_httpd = NULL;
 httpd_handle_t camera_httpd = NULL;
 
+// camera metadata to expose to controller
+static char device_name[32] = "cam1";
+static char room_id[32]    = "unknown";
+static float poll_interval = 10.0f;
+
+static esp_err_t props_get_handler(httpd_req_t *req) {
+  char resp[160];
+  int len = snprintf(resp, sizeof(resp),
+    "{\"name\":\"%s\",\"room_id\":\"%s\",\"poll_interval\":%.1f}",
+    device_name, room_id, poll_interval);
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  return httpd_resp_send(req, resp, len);
+}
+
+// very light JSON parsing to keep deps out; swap for ArduinoJson if you prefer
+static esp_err_t props_set_handler(httpd_req_t *req) {
+  char buf[160];
+  int rlen = httpd_req_recv(req, buf, min((int)sizeof(buf) - 1, (int)req->content_len));
+  if (rlen <= 0) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to read request");
+  buf[rlen] = 0;
+
+  char name_tmp[32], room_tmp[32];
+  float poll_tmp;
+  if (sscanf(buf, "{\"name\":\"%31[^\"]\",\"room_id\":\"%31[^\"]\",\"poll_interval\":%f}",
+             name_tmp, room_tmp, &poll_tmp) >= 3) {
+    strlcpy(device_name, name_tmp, sizeof(device_name));
+    strlcpy(room_id, room_tmp, sizeof(room_id));
+    poll_interval = poll_tmp;
+  }
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  return httpd_resp_send(req, "ok", 2);
+}
+
 typedef struct {
   size_t size;   //number of values used for filtering
   size_t index;  //current value index
@@ -654,6 +688,8 @@ static esp_err_t index_handler(httpd_req_t *req) {
   httpd_resp_set_type(req, "text/html");
   httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
   httpd_resp_set_hdr(req, "X-Device-Type", "gel-camera");
+  httpd_resp_set_hdr(req, "X-Device-Name", device_name);
+  httpd_resp_set_hdr(req, "X-Room-ID", room_id);
   httpd_resp_set_hdr(req, "X-Device-ID", WiFi.macAddress().c_str());
 
   sensor_t *s = esp_camera_sensor_get();
@@ -676,6 +712,8 @@ static esp_err_t index_head_handler(httpd_req_t *req) {
   httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
   httpd_resp_set_hdr(req, "X-Device-Type", "gel-camera");
   httpd_resp_set_hdr(req, "X-Device-ID", WiFi.macAddress().c_str());
+  httpd_resp_set_hdr(req, "X-Device-Name", device_name);
+  httpd_resp_set_hdr(req, "X-Room-ID", room_id);
   return httpd_resp_send(req, NULL, 0);  // HEAD response: headers only, no body
 }
 
@@ -839,6 +877,18 @@ void startCameraServer() {
 #endif
   };
 
+  httpd_uri_t props_get_uri = {
+    .uri="/props", .method=HTTP_GET,
+    .handler=props_get_handler,
+    .user_ctx=NULL };
+
+  httpd_uri_t props_set_uri = {
+    .uri="/props", .method=HTTP_POST,
+    .handler=props_set_handler,
+    .user_ctx=NULL };
+
+
+
   ra_filter_init(&ra_filter, 20);
 
   log_i("Starting web server on port: '%d'", config.server_port);
@@ -855,6 +905,10 @@ void startCameraServer() {
     httpd_register_uri_handler(camera_httpd, &greg_uri);
     httpd_register_uri_handler(camera_httpd, &pll_uri);
     httpd_register_uri_handler(camera_httpd, &win_uri);
+
+    httpd_register_uri_handler(camera_httpd, &props_get_uri);
+    httpd_register_uri_handler(camera_httpd, &props_set_uri);
+
   }
 
   config.server_port += 1;
