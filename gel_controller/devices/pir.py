@@ -16,7 +16,7 @@ ESPHOME_PORT = 6053
 
 # Known presence sensor devices (always check these first)
 KNOWN_SENSORS = [
-    {"host": "192.168.1.189", "port": 6053, "name": "seeedstudio-mr60bha2-kit-8e65b4"}
+    {"host": "10.42.0.156", "port": 6053, "name": "seeedstudio-mr60bha2-kit-8e65b4"}
 ]
 
 

@@ -3,8 +3,12 @@ Room - Represents a physical room with state management.
 """
 
 import logging
+from turtle import pd
 from typing import List, Optional
 from .devices.pir import discover_presence_sensors
+from .devices.camera import discover_cameras
+from .person_detector import PersonDetector
+from .camera import Camera
 
 logger = logging.getLogger(__name__)
 
@@ -37,32 +41,37 @@ class Room:
         self._person_detectors: List['PersonDetector'] = []
 
         # Validate and set initial state
-        self.set_state(initial_state)
+        self.state = initial_state
 
-    # Room ID getters/setters
-    def get_room_id(self) -> str:
+    @property
+    def room_id(self) -> str:
         """Get room ID."""
         return self._room_id
 
-    def set_room_id(self, room_id: str) -> None:
-        """Set room ID."""
-        self._room_id = room_id
 
-    # Name getters/setters
-    def get_name(self) -> str:
+    @room_id.setter
+    def room_id(self, id: str) -> None:
+        """Set room ID."""
+        self._room_id = id
+
+
+    @property
+    def name(self) -> str:
         """Get room name."""
         return self._name
 
-    def set_name(self, name: str) -> None:
+    @name.setter
+    def name(self, name: str) -> None:
         """Set room name."""
         self._name = name
 
-    # State getters/setters
-    def get_state(self) -> str:
+    @property
+    def state(self) -> str:
         """Get current room state."""
         return self._state
 
-    def set_state(self, state: str) -> None:
+    @state.setter
+    def state(self, state: str) -> None:
         """
         Set room state.
 
@@ -82,11 +91,29 @@ class Room:
         if old_state != state:
             logger.info(f"Room {self._name} state changed: {old_state} → {state}")
 
+    def get_state(self) -> str:
+        """Get current room state."""
+        return self._state
+
+    def set_state(self, state: str) -> None:
+        """Set room state using the property setter."""
+        self.state = state
+
     # Camera management
     def get_cameras(self) -> List['Camera']:
         """Get list of cameras in this room."""
         # scan network for espressif devices using nmap
-
+        cameras = discover_cameras()
+        for camera in cameras:
+            camera = Camera(
+                room_id= self.room_id,
+                ip=camera["ip"],
+                port=camera["port"],
+                mac=camera["mac"],
+                url=camera["url"],
+                stream_url=camera["stream_url"]
+            )
+            self.add_camera(camera)
         return self._cameras.copy()
 
     def add_camera(self, camera: 'Camera') -> None:
@@ -131,12 +158,19 @@ class Room:
     # Person detector management
     def get_person_detectors(self) -> List['PersonDetector']:
         """Get list of person detectors in this room."""
-        self._person_detectors = discover_presence_sensors()
+        pds = discover_presence_sensors()
+        for pd in pds:
+            pd = PersonDetector(
+                name=pd["name"],
+                host=pd["ip"],
+                port=pd["port"]
+            )
+            self.add_person_detector(pd)
         return self._person_detectors.copy()
 
     def add_person_detector(self, detector: 'PersonDetector') -> None:
         """
-        Add a person detector to this room.
+        Add a person detector to this room. Ignore duplicates.
 
         Args:
             detector: PersonDetector instance to add
