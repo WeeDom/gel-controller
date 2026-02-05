@@ -45,7 +45,7 @@ class RoomController:
         """
         if room not in self._rooms:
             self._rooms.append(room)
-            logger.info(f"Added room: {room.get_name()} (ID: {room.get_room_id()})")
+            logger.info(f"Added room: {room.name} (ID: {room.room_id})")
         else:
             logger.warning(f"Room {room.get_name()} already exists in controller")
 

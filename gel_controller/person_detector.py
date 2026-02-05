@@ -11,6 +11,11 @@ logger = logging.getLogger(__name__)
 
 
 class PersonDetector:
+    __slots__ = (
+        "_ip", "_name", "_port", "_host", "_encryption_key",
+        "_heartbeat_timeout", "_last_heartbeat_time",
+        "_api_client", "_heartbeat_sensor_key", "_room")
+
     """
     Person detector using ESPHome device with heartbeat sensor.
 
@@ -41,55 +46,58 @@ class PersonDetector:
         self._port = port
         self._encryption_key = encryption_key
         self._heartbeat_timeout = heartbeat_timeout
-        self._room: Optional['Room'] = None
         self._last_heartbeat_time: Optional[float] = None
         self._api_client: Optional[aioesphomeapi.APIClient] = None
         self._heartbeat_sensor_key: Optional[int] = None
 
-    # Name getters/setters
-    def get_name(self) -> str:
+    ## mutable
+    @property
+    def name(self) -> str:
         """Get detector name."""
         return self._name
 
-    def set_name(self, name: str) -> None:
+    @name.setter
+    def name(self, name: str) -> None:
         """Set detector name."""
         self._name = name
 
-    # Host getters/setters
-    def get_host(self) -> str:
-        """Get ESPHome device host."""
-        return self._host
-
-    def set_host(self, host: str) -> None:
-        """Set ESPHome device host."""
-        self._host = host
-
-    # Port getters/setters
-    def get_port(self) -> int:
-        """Get ESPHome API port."""
-        return self._port
-
-    def set_port(self, port: int) -> None:
-        """Set ESPHome API port."""
-        self._port = port
-
-    # Heartbeat timeout getters/setters
-    def get_heartbeat_timeout(self) -> float:
+    @property
+    def heartbeat_timeout(self) -> float:
         """Get heartbeat timeout in seconds."""
         return self._heartbeat_timeout
 
-    def set_heartbeat_timeout(self, timeout: float) -> None:
+    @heartbeat_timeout.setter
+    def heartbeat_timeout(self, timeout: float) -> None:
         """Set heartbeat timeout in seconds."""
         self._heartbeat_timeout = timeout
 
-    # Room reference getters/setters
-    def get_room(self) -> Optional['Room']:
+    @property
+    def room(self) -> Optional['Room']:
         """Get associated room."""
         return self._room
 
-    def set_room(self, room: 'Room') -> None:
+    @room.setter
+    def room(self, room: 'Room') -> None:
         """Set associated room."""
         self._room = room
+
+    ## immutable
+    @property
+    def ip(self) -> str:
+        """Get device IP address."""
+        return self._host
+
+    # Host getters/setters
+    @property
+    def host(self) -> str:
+        """Get ESPHome device host."""
+        return self._host
+
+    # Port getters/setters
+    @property
+    def port(self) -> int:
+        """Get ESPHome API port."""
+        return self._port
 
     async def connect(self) -> None:
         """

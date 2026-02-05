@@ -6,6 +6,7 @@ import logging
 import time
 from datetime import datetime
 from typing import Optional
+from .camera_state import CameraState, CameraStatus
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +25,14 @@ class Camera:
         self,
         name: str,
         room_id: str,
-        initial_state: str = "inactive",
+        initial_status: CameraStatus = CameraStatus.OFFLINE,
         poll_interval: float = 10.0,
-        output_interval: float = 10.0
+        output_interval: float = 10.0,
+        mac: Optional[str] = None,
+        url: Optional[str] = None,
+        stream_url: Optional[str] = None,
+        ip: Optional[str] = None,
+        port: Optional[int] = None
     ):
         """
         Initialize a Camera.
@@ -34,81 +40,98 @@ class Camera:
         Args:
             name: Camera name
             room_id: ID of the room this camera belongs to
-            initial_state: Initial state (default: "inactive")
+            initial_status: Initial status (default: OFFLINE)
             poll_interval: How often to poll room state in seconds (default: 10.0)
             output_interval: How often to output status in seconds (default: 10.0)
 
         Raises:
-            ValueError: If initial_state is invalid
+            ValueError: If initial_status is invalid
         """
         self._name = name
         self._room_id = room_id
-        self._state = None
+        self._camera_state = CameraState(initial_status)
         self._poll_interval = poll_interval
         self._output_interval = output_interval
         self._last_output_time = 0.0
-
-        # Validate and set initial state
-        self.set_state(initial_state)
-
-    # Name getters/setters
-    def get_name(self) -> str:
+        self._ip = ip
+        self.mac = mac
+        self.url = None
+        self.stream_url = None
+        self._port = port
+    # Name property
+    @property
+    def name(self) -> str:
         """Get camera name."""
         return self._name
 
-    def set_name(self, name: str) -> None:
+    @name.setter
+    def name(self, name: str) -> None:
         """Set camera name."""
         self._name = name
 
-    # Room ID getters/setters
-    def get_room_id(self) -> str:
+    # Room ID property
+    @property
+    def room_id(self) -> str:
         """Get room ID."""
         return self._room_id
 
-    def set_room_id(self, room_id: str) -> None:
+    @property
+    def ip(self) -> Optional[str]:
+        """Get camera IP address."""
+        return self._ip
+
+    @room_id.setter
+    def room_id(self, room_id: str) -> None:
         """Set room ID."""
         self._room_id = room_id
 
-    # State getters/setters
-    def get_state(self) -> str:
+    # State property
+    @property
+    def state(self) -> str:
         """Get current camera state."""
         return self._state
 
-    def set_state(self, state: str) -> None:
+    @property
+    def status(self) -> CameraStatus:
+        """Get current camera status."""
+        return self._camera_state.status
+
+    @property
+    def status_value(self) -> str:
+        """Get current status as string."""
+        return self._camera_state.status_value
+
+    def set_status(self, new_status: CameraStatus, reason: Optional[str] = None) -> bool:
         """
-        Set camera state.
+        Set camera status with transition validation.
 
         Args:
-            state: New state ("active" or "inactive")
+            new_status: Target status
+            reason: Optional reason for transition
 
-        Raises:
-            ValueError: If state is invalid
+        Returns:
+            True if transition successful
         """
-        valid_states = ["active", "inactive"]
-        if state not in valid_states:
-            raise ValueError(f"Invalid state: {state}. Must be one of {valid_states}")
+        return self._camera_state.transition_to(new_status, reason)
 
-        old_state = self._state
-        self._state = state
-
-        if old_state != state:
-            logger.debug(f"Camera {self._name} state changed: {old_state} → {state}")
-
-    # Poll interval getters/setters
-    def get_poll_interval(self) -> float:
+    @property
+    def poll_interval(self) -> float:
         """Get poll interval in seconds."""
         return self._poll_interval
 
-    def set_poll_interval(self, interval: float) -> None:
+    @poll_interval.setter
+    def poll_interval(self, interval: float) -> None:
         """Set poll interval in seconds."""
         self._poll_interval = interval
 
-    # Output interval getters/setters
-    def get_output_interval(self) -> float:
+    # Output interval property
+    @property
+    def output_interval(self) -> float:
         """Get output interval in seconds."""
         return self._output_interval
 
-    def set_output_interval(self, interval: float) -> None:
+    @output_interval.setter
+    def output_interval(self, interval: float) -> None:
         """Set output interval in seconds."""
         self._output_interval = interval
 
@@ -124,12 +147,12 @@ class Camera:
         """
         room_state = room.get_state()
 
-        if room_state == "empty":
-            # Room is empty, camera can activate
-            self.set_state("active")
+        if self.status in [CameraStatus.INACTIVE, CameraStatus.OFFLINE]:
+            self.set_status(CameraStatus.ACTIVE, "Room empty")
         elif room_state == "occupied":
             # Room is occupied, camera must deactivate
-            self.set_state("inactive")
+            if self.status in [CameraStatus.ACTIVE, CameraStatus.RECORDING]:
+                self.set_status(CameraStatus.INACTIVE, "Room occupied")
 
     def output_status(self) -> None:
         """

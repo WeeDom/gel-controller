@@ -2,7 +2,7 @@ import asyncio
 import subprocess
 import socket
 import time
-from aioesphomeapi import APIClient
+from aioesphomeapi.client import APIClient
 
 ESPRESSIF_OUIS = {
     "84:1f:e8",

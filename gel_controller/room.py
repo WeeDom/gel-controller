@@ -107,6 +107,7 @@ class Room:
         for camera in cameras:
             camera = Camera(
                 room_id= self.room_id,
+                name=camera["name"],
                 ip=camera["ip"],
                 port=camera["port"],
                 mac=camera["mac"],
@@ -125,9 +126,9 @@ class Room:
         """
         if camera not in self._cameras:
             self._cameras.append(camera)
-            logger.debug(f"Added camera {camera.get_name()} to room {self._name}")
+            logger.debug(f"Added camera {camera.name} to room {self._name}")
         else:
-            logger.warning(f"Camera {camera.get_name()} already in room {self._name}")
+            logger.warning(f"Camera {camera.name} already in room {self._name}")
 
     def remove_camera(self, camera: 'Camera') -> None:
         """
@@ -177,9 +178,9 @@ class Room:
         """
         if detector not in self._person_detectors:
             self._person_detectors.append(detector)
-            logger.debug(f"Added detector {detector.get_name()} to room {self._name}")
+            logger.debug(f"Added detector {detector.name} to room {self._name}")
         else:
-            logger.warning(f"Detector {detector.get_name()} already in room {self._name}")
+            logger.warning(f"Detector {detector.name} already in room {self._name}")
 
     def remove_person_detector(self, detector: 'PersonDetector') -> None:
         """

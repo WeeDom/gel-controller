@@ -43,15 +43,16 @@ def is_gel_camera(ip, port):
         print(f"    Response headers: {response.headers}")
         # Check for our custom identification header
         device_type = response.headers.get('X-Device-Type', '')
-        device_id = response.headers.get('X-Device-ID', '')
+        device_id = response.headers.get('X-Device-Id', '')
+        device_name = response.headers.get('X-Device-Name', '')
 
         if device_type == 'gel-camera':
-            return True, device_id
+            return True, device_id, device_name
 
     except requests.RequestException:
         pass
 
-    return False, None
+    return False, None, None
 
 
 def discover_cameras():
@@ -65,13 +66,14 @@ def discover_cameras():
             if not port_open(ip, port):
                 continue
 
-            is_camera, device_id = is_gel_camera(ip, port)
+            is_camera, device_id, device_name = is_gel_camera(ip, port)
             if is_camera:
-                print(f"  ✓ Camera found! MAC: {device_id}")
+                print(f"  ✓ Camera found! MAC: {device_id}, Name: {device_name}")
                 cameras.append({
                     "ip": ip,
                     "port": port,
                     "mac": device_id,
+                    "name": device_name,
                     "url": f"http://{ip}:{port}",
                     "stream_url": f"http://{ip}:{port}:81/stream"  # ESP32-CAM stream port
                 })
