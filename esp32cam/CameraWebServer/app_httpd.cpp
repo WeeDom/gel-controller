@@ -49,9 +49,10 @@ httpd_handle_t stream_httpd = NULL;
 httpd_handle_t camera_httpd = NULL;
 
 // camera metadata to expose to controller
-static char device_name[32] = "cam2";
+static char device_name[32] = "cam1";
 static char room_id[32]    = "unknown";
 static float poll_interval = 10.0f;
+static char device_mac[18] = "";  // MAC address buffer
 
 static esp_err_t props_get_handler(httpd_req_t *req) {
   char resp[160];
@@ -690,7 +691,7 @@ static esp_err_t index_handler(httpd_req_t *req) {
   httpd_resp_set_hdr(req, "X-Device-Type", "gel-camera");
   httpd_resp_set_hdr(req, "X-Device-Name", device_name);
   httpd_resp_set_hdr(req, "X-Room-ID", room_id);
-  httpd_resp_set_hdr(req, "X-Device-ID", WiFi.macAddress().c_str());
+  httpd_resp_set_hdr(req, "X-Device-ID", device_mac);
 
   sensor_t *s = esp_camera_sensor_get();
   if (s != NULL) {
@@ -711,13 +712,17 @@ static esp_err_t index_head_handler(httpd_req_t *req) {
   httpd_resp_set_type(req, "text/html");
   httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
   httpd_resp_set_hdr(req, "X-Device-Type", "gel-camera");
-  httpd_resp_set_hdr(req, "X-Device-ID", WiFi.macAddress().c_str());
+  httpd_resp_set_hdr(req, "X-Device-ID", device_mac);
   httpd_resp_set_hdr(req, "X-Device-Name", device_name);
   httpd_resp_set_hdr(req, "X-Room-ID", room_id);
   return httpd_resp_send(req, NULL, 0);  // HEAD response: headers only, no body
 }
 
 void startCameraServer() {
+  // Initialize MAC address buffer
+  String mac = WiFi.macAddress();
+  strlcpy(device_mac, mac.c_str(), sizeof(device_mac));
+
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.max_uri_handlers = 16;
 

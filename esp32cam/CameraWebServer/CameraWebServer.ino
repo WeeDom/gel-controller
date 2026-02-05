@@ -177,7 +177,6 @@ void setup() {
 
   // Configure OTA updates
   ArduinoOTA.setHostname("esp32cam-1");
-  ArduinoOTA.setPassword("B0ll0cks!");  // Optional: set OTA password
 
   ArduinoOTA.onStart([]() {
     String type;
