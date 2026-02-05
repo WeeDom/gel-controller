@@ -4,7 +4,7 @@ Unified device discovery for the gel-controller system.
 Discovers both cameras and PIR sensors on the network.
 """
 
-from detect_camera import discover_cameras
+from gel_controller.devices.camera import discover_cameras
 from gel_controller.devices.pir import discover_presence_sensors
 import json
 
