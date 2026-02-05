@@ -4,3 +4,4 @@ __pycache__
 *.pyc
 ## esp noise
 .esphome
+*.egg-info/
