@@ -9,7 +9,7 @@
 | **Upload Speed** | 115200 baud | Reliable for all boards tested |
 | **Flash Mode** | QIO | Default for AI-Thinker module |
 | **Flash Frequency** | 40 MHz | Default and stable |
-| **Partition Scheme** | Huge APP (3 MB No OTA / 1 MB SPIFFS) | Required for camera firmware size |
+| **Partition Scheme** | Default 4MB with spiffs (1.2MB APP/1.5MB SPIFFS) | **Changed from "Huge APP" to enable OTA** |
 
 ---
 
@@ -21,6 +21,7 @@ Do **not** update or replace unless specifically tested and tagged.
 |----------|----------|---------|----------------|
 | **esp32-camera** | 1.0.0 | [github.com/espressif/esp32-camera](https://github.com/espressif/esp32-camera) | ESP32 core |
 | **WiFi** | 1.0.0 | Built-in | ESP32 core |
+| **ArduinoOTA** | 1.0.0 | Built-in | ESP32 core |
 | **FS** | 1.0.0 | Built-in | ESP32 core |
 | **SPIFFS** | 1.0.0 | Built-in | ESP32 core |
 | **Arduino** | 1.8.x | [arduino.cc](https://www.arduino.cc/en/software) | Global |

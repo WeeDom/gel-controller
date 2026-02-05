@@ -49,7 +49,7 @@ httpd_handle_t stream_httpd = NULL;
 httpd_handle_t camera_httpd = NULL;
 
 // camera metadata to expose to controller
-static char device_name[32] = "cam1";
+static char device_name[32] = "cam2";
 static char room_id[32]    = "unknown";
 static float poll_interval = 10.0f;
 

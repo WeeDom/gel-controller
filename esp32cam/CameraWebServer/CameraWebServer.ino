@@ -1,6 +1,7 @@
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <time.h>
+#include <ArduinoOTA.h>
 
 // ===========================
 // Select camera model in board_config.h
@@ -145,7 +146,6 @@ void setup() {
   }
   Serial.println("");
 
-  // Force connection to channel 11 for northern.vault
   WiFi.begin(ssid, password, 11);
   WiFi.setSleep(false);
 
@@ -175,12 +175,53 @@ void setup() {
 
   startCameraServer();
 
-  Serial.print("Camera 1 Ready! Use 'http://");
+  // Configure OTA updates
+  ArduinoOTA.setHostname("esp32cam-1");
+  ArduinoOTA.setPassword("B0ll0cks!");  // Optional: set OTA password
+
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else {  // U_SPIFFS
+      type = "filesystem";
+    }
+    Serial.println("Start updating " + type);
+  });
+
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nEnd");
+  });
+
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      Serial.println("Auth Failed");
+    } else if (error == OTA_BEGIN_ERROR) {
+      Serial.println("Begin Failed");
+    } else if (error == OTA_CONNECT_ERROR) {
+      Serial.println("Connect Failed");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      Serial.println("Receive Failed");
+    } else if (error == OTA_END_ERROR) {
+      Serial.println("End Failed");
+    }
+  });
+
+  ArduinoOTA.begin();
+  Serial.println("OTA Ready");
+
+  Serial.print("Camera 2 Ready! Use 'http://");
   Serial.print(WiFi.localIP());
   Serial.println("' to connect");
 }
 
 void loop() {
-  // Do nothing. Everything is done in another task by the web server
-  delay(10000);
+  // Handle OTA updates
+  ArduinoOTA.handle();
+  delay(10);
 }
