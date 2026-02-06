@@ -4,8 +4,11 @@ PersonDetector - Monitors ESPHome device for heartbeat data to detect occupancy.
 
 import logging
 import time
-from typing import Optional
-import aioesphomeapi
+from typing import Optional, TYPE_CHECKING
+from aioesphomeapi.client import APIClient
+
+if TYPE_CHECKING:
+    from .room import Room
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,7 @@ class PersonDetector:
         name: str,
         host: str,
         port: int = 6053,
+        room: Optional['Room'] = None,
         encryption_key: Optional[str] = None,
         heartbeat_timeout: float = 10.0
     ):
@@ -44,10 +48,11 @@ class PersonDetector:
         self._name = name
         self._host = host
         self._port = port
+        self._room = room
         self._encryption_key = encryption_key
         self._heartbeat_timeout = heartbeat_timeout
         self._last_heartbeat_time: Optional[float] = None
-        self._api_client: Optional[aioesphomeapi.APIClient] = None
+        self._api_client: Optional[APIClient] = None
         self._heartbeat_sensor_key: Optional[int] = None
 
     ## mutable
@@ -106,7 +111,7 @@ class PersonDetector:
         Establishes connection and retrieves device entities.
         """
         try:
-            self._api_client = aioesphomeapi.APIClient(
+            self._api_client = APIClient(
                 self._host,
                 self._port,
                 None,  # password (deprecated)
@@ -121,6 +126,7 @@ class PersonDetector:
 
             # Find the heartbeat sensor
             for entity in entities:
+                print(f"  - Entity: {entity.name} (key: {entity.key}, type: {type(entity).__name__})")
                 if hasattr(entity, 'name') and 'heart rate' in entity.name.lower():
                     self._heartbeat_sensor_key = entity.key
                     logger.info(f"Found heartbeat sensor: {entity.name} (key: {entity.key})")
@@ -185,8 +191,8 @@ class PersonDetector:
             self._last_heartbeat_time = time.time()
 
             # Update room state to occupied
-            if self._room:
-                self._room.set_state("occupied")
+            if self.room:
+                self.room.set_state("occupied")
                 logger.debug(f"Detector {self._name} set room to occupied (HR: {heart_rate})")
 
     def on_heartbeat_timeout(self) -> None:

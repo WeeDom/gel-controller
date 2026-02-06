@@ -47,7 +47,7 @@ class RoomController:
             self._rooms.append(room)
             logger.info(f"Added room: {room.name} (ID: {room.room_id})")
         else:
-            logger.warning(f"Room {room.get_name()} already exists in controller")
+            logger.warning(f"Room {room.name} already exists in controller")
 
     def remove_room(self, room: 'Room') -> None:
         """
@@ -58,9 +58,9 @@ class RoomController:
         """
         if room in self._rooms:
             self._rooms.remove(room)
-            logger.info(f"Removed room: {room.get_name()} (ID: {room.get_room_id()})")
+            logger.info(f"Removed room: {room.name} (ID: {room.get_room_id()})")
         else:
-            logger.warning(f"Room {room.get_name()} not found in controller")
+            logger.warning(f"Room {room.name} not found in controller")
 
     def start(self) -> None:
         """
@@ -86,24 +86,24 @@ class RoomController:
                 thread = threading.Thread(
                     target=self._run_camera_loop,
                     args=(camera, room),
-                    name=f"Camera-{camera.get_name()}",
+                    name=f"Camera-{camera.name}",
                     daemon=True
                 )
                 thread.start()
                 self._threads.append(thread)
-                logger.debug(f"Started thread for camera: {camera.get_name()}")
+                logger.debug(f"Started thread for camera: {camera.name}")
 
             # Start person detectors
             for detector in room.get_person_detectors():
                 thread = threading.Thread(
                     target=self._run_detector_loop,
                     args=(detector,),
-                    name=f"Detector-{detector.get_name()}",
+                    name=f"Detector-{detector.name}",
                     daemon=True
                 )
                 thread.start()
                 self._threads.append(thread)
-                logger.debug(f"Started thread for detector: {detector.get_name()}")
+                logger.debug(f"Started thread for detector: {detector.name}")
 
         logger.info(f"Started {len(self._threads)} thread(s)")
 
@@ -128,7 +128,7 @@ class RoomController:
                 import time
                 time.sleep(camera.get_poll_interval())
         except Exception as e:
-            logger.error(f"Error in camera loop for {camera.get_name()}: {e}")
+            logger.error(f"Error in camera loop for {camera.name}: {e}")
 
     def _run_detector_loop(self, detector: 'PersonDetector') -> None:
         """
@@ -145,7 +145,7 @@ class RoomController:
             # Run async detector
             loop.run_until_complete(self._async_detector_loop(detector))
         except Exception as e:
-            logger.error(f"Error in detector loop for {detector.get_name()}: {e}")
+            logger.error(f"Error in detector loop for {detector.name}: {e}")
         finally:
             loop.close()
 
@@ -169,7 +169,7 @@ class RoomController:
                 await asyncio.sleep(1)  # Check every second
 
         except Exception as e:
-            logger.error(f"Error in async detector loop for {detector.get_name()}: {e}")
+            logger.error(f"Error in async detector loop for {detector.name}: {e}")
         finally:
             await detector.disconnect()
 
