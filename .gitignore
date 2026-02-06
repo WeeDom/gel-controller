@@ -2,6 +2,8 @@ secrets.yaml
 venv
 __pycache__
 *.pyc
+*.egg-info/
 ## esp noise
 .esphome
-*.egg-info/
+##
+.vscode
