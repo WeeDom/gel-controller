@@ -3,7 +3,9 @@ Room - Represents a physical room with state management.
 """
 
 import logging
-from turtle import pd
+import threading
+import time
+from datetime import datetime
 from typing import List, Optional
 from .devices.pir import discover_presence_sensors
 from .devices.camera import discover_cameras
@@ -39,6 +41,10 @@ class Room:
         self._state = None
         self._cameras: List['Camera'] = []
         self._person_detectors: List['PersonDetector'] = []
+
+        # Capture timer management
+        self._empty_timer: Optional[threading.Timer] = None
+        self._capture_delay = 30.0  # 30 seconds in seconds
 
         # Validate and set initial state
         self.state = initial_state
@@ -86,10 +92,69 @@ class Room:
             raise ValueError(f"Invalid state: {state}. Must be one of {valid_states}")
 
         old_state = self._state
-        self._state = state
+        self._state = state  # Actually update the state!
 
         if old_state != state:
             logger.info(f"Room {self._name} state changed: {old_state} → {state}")
+
+            # Handle state transitions
+            if state == "empty" and old_state == "occupied":
+                self._start_empty_timer()
+            elif state == "occupied" and old_state == "empty":
+                self._cancel_empty_timer()
+
+    def _start_empty_timer(self) -> None:
+        """Start 3-minute timer when room becomes empty."""
+        self._cancel_empty_timer()  # Cancel any existing timer
+
+        logger.info(f"🕐 Room {self._name}: Starting {self._capture_delay/60:.1f}-minute capture timer")
+        self._empty_timer = threading.Timer(self._capture_delay, self._trigger_capture)
+        self._empty_timer.daemon = True
+        self._empty_timer.start()
+        logger.info(f"✓ Timer started, will capture at {time.strftime('%H:%M:%S', time.localtime(time.time() + self._capture_delay))}")
+
+
+    def _cancel_empty_timer(self) -> None:
+        """Cancel the empty timer if it exists."""
+        if self._empty_timer is not None:
+            self._empty_timer.cancel()
+            self._empty_timer = None
+            logger.info(f"⏹️  Room {self._name}: Cancelled capture timer (room occupied again)")
+
+    def _trigger_capture(self) -> None:
+        """Trigger all cameras to capture images after 3 minutes of empty room."""
+        logger.info(f"Room {self._name}: 3 minutes elapsed, triggering camera captures")
+        import requests
+        from pathlib import Path
+
+        # Create captures directory if it doesn't exist
+        capture_dir = Path("captures")
+        capture_dir.mkdir(exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        for camera in self._cameras:
+            try:
+                capture_url = f"http://{camera.ip}/capture"
+                logger.info(f"Capturing from {camera.name} at {capture_url}")
+
+                response = requests.get(
+                    capture_url,
+                    timeout=10,
+                    headers={
+                        'User-Agent': 'GEL-Controller/1.0'
+                    }
+                )
+
+                if response.status_code == 200:
+                    filename = capture_dir / f"{camera.name}-{timestamp}.jpeg"
+                    filename.write_bytes(response.content)
+                    logger.info(f"✓ Saved capture to {filename}")
+                else:
+                    logger.error(f"Failed to capture from {camera.name}: HTTP {response.status_code}")
+
+            except Exception as e:
+                logger.error(f"Error capturing from {camera.name}: {e}")
 
     def get_state(self) -> str:
         """Get current room state."""
@@ -139,9 +204,9 @@ class Room:
         """
         if camera in self._cameras:
             self._cameras.remove(camera)
-            logger.debug(f"Removed camera {camera.get_name()} from room {self._name}")
+            logger.debug(f"Removed camera {camera.name} from room {self._name}")
         else:
-            logger.warning(f"Camera {camera.get_name()} not found in room {self._name}")
+            logger.warning(f"Camera {camera.name} not found in room {self._name}")
 
     def set_camera_inactive(self, camera: 'Camera') -> None:
         """
@@ -151,22 +216,25 @@ class Room:
             camera: Camera instance to deactivate
         """
         if camera in self._cameras:
-            camera.set_state("inactive")
-            logger.debug(f"Forced camera {camera.get_name()} inactive in room {self._name}")
+            from .camera_state import CameraStatus
+            #FIXME actually turn the camera off instead of just setting status
+            camera.set_status(CameraStatus.INACTIVE, reason="Forced by room controller")
+            logger.debug(f"Forced camera {camera.name} inactive in room {self.name}")
         else:
-            logger.warning(f"Camera {camera.get_name()} not found in room {self._name}")
+            logger.warning(f"Camera {camera.name} not found in room {self.name}")
 
     # Person detector management
     def get_person_detectors(self) -> List['PersonDetector']:
         """Get list of person detectors in this room."""
         pds = discover_presence_sensors()
         for pd in pds:
-            pd = PersonDetector(
+            detector = PersonDetector(
                 name=pd["name"],
                 host=pd["ip"],
-                port=pd["port"]
+                port=pd["port"],
+                room=self  # Pass room reference so detector can update room state
             )
-            self.add_person_detector(pd)
+            self.add_person_detector(detector)
         return self._person_detectors.copy()
 
     def add_person_detector(self, detector: 'PersonDetector') -> None:
@@ -191,6 +259,6 @@ class Room:
         """
         if detector in self._person_detectors:
             self._person_detectors.remove(detector)
-            logger.debug(f"Removed detector {detector.get_name()} from room {self._name}")
+            logger.debug(f"Removed detector {detector.name} from room {self.name}")
         else:
-            logger.warning(f"Detector {detector.get_name()} not found in room {self._name}")
+            logger.warning(f"Detector {detector.name} not found in room {self.name}")

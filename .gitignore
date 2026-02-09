@@ -5,5 +5,10 @@ __pycache__
 *.egg-info/
 ## esp noise
 .esphome
-##
+## vscode stuff
 .vscode
+## don't vc images/logs
+.env
+captures/
+logs/
+

@@ -4,11 +4,15 @@ RoomController - Orchestrates multiple rooms with cameras and person detectors.
 
 import asyncio
 import threading
-from typing import List, Dict
+from typing import List, Dict, TYPE_CHECKING
 import logging
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from .room import Room
+    from .camera import Camera
+    from .person_detector import PersonDetector
 
 class RoomController:
     """
@@ -58,7 +62,7 @@ class RoomController:
         """
         if room in self._rooms:
             self._rooms.remove(room)
-            logger.info(f"Removed room: {room.name} (ID: {room.get_room_id()})")
+            logger.info(f"Removed room: {room.name} (ID: {room.room_id})")
         else:
             logger.warning(f"Room {room.name} not found in controller")
 

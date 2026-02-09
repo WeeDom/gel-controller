@@ -174,7 +174,7 @@ class PersonDetector:
         # Check if this is the heartbeat sensor
         if self._heartbeat_sensor_key is not None and state.key == self._heartbeat_sensor_key:
             heart_rate = float(state.state)
-            logger.debug(f"Heartbeat detected: {heart_rate} bpm")
+            logger.info(f"💓 Heartbeat sensor update: {heart_rate} bpm")
 
             # Only consider valid heartbeat if rate > 0
             if heart_rate > 0:
@@ -193,7 +193,7 @@ class PersonDetector:
             # Update room state to occupied
             if self.room:
                 self.room.set_state("occupied")
-                logger.debug(f"Detector {self._name} set room to occupied (HR: {heart_rate})")
+                logger.info(f"Detector {self._name} set room to occupied (HR: {heart_rate} bpm)")
 
     def on_heartbeat_timeout(self) -> None:
         """
@@ -205,8 +205,10 @@ class PersonDetector:
 
         # Update room state to empty
         if self._room:
+            logger.info(f"🚪 Detector {self._name} setting room to EMPTY (timeout)")
             self._room.set_state("empty")
-            logger.debug(f"Detector {self._name} set room to empty (timeout)")
+        else:
+            logger.warning(f"Detector {self._name} has no room assigned!")
 
     def check_heartbeat_timeout(self) -> None:
         """
@@ -216,6 +218,9 @@ class PersonDetector:
         """
         if self._last_heartbeat_time is not None:
             time_since_heartbeat = time.time() - self._last_heartbeat_time
+            logger.debug(f"Checking timeout: last heartbeat {time_since_heartbeat:.1f}s ago (timeout={self._heartbeat_timeout}s)")
             if time_since_heartbeat > self._heartbeat_timeout:
-                logger.info(f"Heartbeat timeout after {time_since_heartbeat:.1f}s")
+                logger.info(f"⏱️  Heartbeat timeout after {time_since_heartbeat:.1f}s → Setting room to EMPTY")
                 self.on_heartbeat_timeout()
+        else:
+            logger.debug(f"No heartbeat detected yet (last_heartbeat_time is None)")
