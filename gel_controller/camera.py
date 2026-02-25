@@ -62,7 +62,7 @@ class Camera:
         self.url = url
         self.stream_url = stream_url
         self._port = port
-        self._state = state
+
     # Name property
     @property
     def name(self) -> str:
@@ -89,12 +89,6 @@ class Camera:
     def room_id(self, room_id: str) -> None:
         """Set room ID."""
         self._room_id = room_id
-
-    # State property
-    @property
-    def state(self) -> Optional[str]:
-        """Get current camera state."""
-        return self._state
 
     @property
     def status(self) -> CameraStatus:
@@ -150,14 +144,21 @@ class Camera:
         Args:
             room: Room instance to check
         """
-        room_state = room.get_state()
+        room_state = room.state
 
-        if self.status in [CameraStatus.INACTIVE, CameraStatus.OFFLINE]:
-            self.set_status(CameraStatus.ACTIVE, "Room empty")
-        elif room_state == "occupied":
-            # Room is occupied, camera must deactivate
-            if self.status in [CameraStatus.ACTIVE, CameraStatus.RECORDING]:
+        if room_state == "occupied":
+            # Occupied room always forces camera inactive.
+            if self.status != CameraStatus.INACTIVE:
                 self.set_status(CameraStatus.INACTIVE, "Room occupied")
+            return
+
+        # Room is empty: activate camera when possible.
+        if self.status == CameraStatus.OFFLINE:
+            # OFFLINE cannot transition directly to ACTIVE.
+            self.set_status(CameraStatus.INACTIVE, "Room empty")
+
+        if self.status == CameraStatus.INACTIVE:
+            self.set_status(CameraStatus.ACTIVE, "Room empty")
 
     def output_status(self) -> None:
         """
@@ -169,7 +170,7 @@ class Camera:
 
         # Check if enough time has passed since last output
         if current_time - self._last_output_time >= self._output_interval:
-            if self._state == "active":
+            if self.status == CameraStatus.ACTIVE:
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 print(f"[{timestamp}] {self._name} active")
                 self._last_output_time = current_time

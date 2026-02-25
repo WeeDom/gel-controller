@@ -156,14 +156,6 @@ class Room:
             except Exception as e:
                 logger.error(f"Error capturing from {camera.name}: {e}")
 
-    def get_state(self) -> Optional[str]:
-        """Get current room state."""
-        return self._state
-
-    def set_state(self, state: str) -> None:
-        """Set room state using the property setter."""
-        self.state = state
-
     # Camera management
     def get_cameras(self) -> List['Camera']:
         """Get list of cameras in this room."""

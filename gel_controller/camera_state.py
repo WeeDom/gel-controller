@@ -33,7 +33,7 @@ class CameraState:
 
     # Valid state transitions
     TRANSITIONS = {
-        CameraStatus.OFFLINE: [CameraStatus.CALIBRATING, CameraStatus.INACTIVE],
+        CameraStatus.OFFLINE: [CameraStatus.CALIBRATING, CameraStatus.INACTIVE, CameraStatus.ACTIVE],
         CameraStatus.CALIBRATING: [CameraStatus.INACTIVE, CameraStatus.ERROR],
         CameraStatus.INACTIVE: [CameraStatus.ACTIVE, CameraStatus.OFFLINE, CameraStatus.ERROR],
         CameraStatus.ACTIVE: [CameraStatus.RECORDING, CameraStatus.INACTIVE, CameraStatus.OFFLINE, CameraStatus.ERROR],

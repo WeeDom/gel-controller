@@ -192,7 +192,7 @@ class PersonDetector:
 
             # Update room state to occupied
             if self.room:
-                self.room.set_state("occupied")
+                self.room.state = "occupied"
                 logger.info(f"Detector {self._name} set room to occupied (HR: {heart_rate} bpm)")
 
     def on_heartbeat_timeout(self) -> None:
@@ -206,7 +206,7 @@ class PersonDetector:
         # Update room state to empty
         if self._room:
             logger.info(f"🚪 Detector {self._name} setting room to EMPTY (timeout)")
-            self._room.set_state("empty")
+            self._room.state = "empty"
         else:
             logger.warning(f"Detector {self._name} has no room assigned!")
 
