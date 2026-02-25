@@ -45,7 +45,7 @@ class TestCompleteWorkflow:
 
         # Person enters room
         detector.on_heartbeat_detected(110.0)
-        assert room.get_state() == "occupied"
+        assert room.state == "occupied"
 
         # Cameras check and deactivate
         camera1.check_room_and_update_state(room)
@@ -56,7 +56,7 @@ class TestCompleteWorkflow:
 
         # Person leaves room
         detector.on_heartbeat_timeout()
-        assert room.get_state() == "empty"
+        assert room.state == "empty"
 
         # Cameras check and reactivate
         camera1.check_room_and_update_state(room)
