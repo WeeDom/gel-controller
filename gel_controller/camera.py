@@ -53,7 +53,17 @@ class Camera:
         """
         self._name = name
         self._room_id = room_id
-        self._camera_state = CameraState(initial_status)
+        resolved_status = initial_status
+        if state is not None:
+            if isinstance(state, CameraStatus):
+                resolved_status = state
+            elif isinstance(state, str):
+                try:
+                    resolved_status = CameraStatus(state.lower())
+                except ValueError:
+                    logger.warning(f"Unknown camera state '{state}', using {initial_status.value}")
+
+        self._camera_state = CameraState(resolved_status)
         self._poll_interval = poll_interval
         self._output_interval = output_interval
         self._last_output_time = 0.0

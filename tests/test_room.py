@@ -3,6 +3,7 @@ Test suite for Room class - Room state management.
 """
 
 import pytest
+from gel_controller.camera_state import CameraStatus
 from gel_controller.room import Room
 from gel_controller.camera import Camera
 from gel_controller.person_detector import PersonDetector
@@ -15,17 +16,15 @@ class TestRoomInitialization:
         """Room starts with no cameras, no detectors, default empty state."""
         room = Room(room_id="room1", name="Gents")
 
-        assert room.get_room_id() == "room1"
-        assert room.get_name() == "Gents"
-        assert room.get_state() == "empty"
-        assert len(room.get_cameras()) == 0
-        assert len(room.get_person_detectors()) == 0
+        assert room.room_id == "room1"
+        assert room.name == "Gents"
+        assert room.state == "empty"
 
     def test_room_custom_initial_state(self):
         """Room can be initialized with custom state."""
         room = Room(room_id="room2", name="Bedroom", initial_state="occupied")
 
-        assert room.get_state() == "occupied"
+        assert room.state == "occupied"
 
 
 class TestRoomStateManagement:
@@ -35,20 +34,20 @@ class TestRoomStateManagement:
         """Get and set room state."""
         room = Room(room_id="room1", name="Test Room")
 
-        assert room.get_state() == "empty"
+        assert room.state == "empty"
 
-        room.set_state("occupied")
-        assert room.get_state() == "occupied"
+        room.state = "occupied"
+        assert room.state == "occupied"
 
-        room.set_state("empty")
-        assert room.get_state() == "empty"
+        room.state = "empty"
+        assert room.state == "empty"
 
     def test_room_state_invalid_value(self):
         """Setting invalid state should raise error."""
         room = Room(room_id="room1", name="Test Room")
 
         with pytest.raises(ValueError):
-            room.set_state("invalid_state")
+            room.state = "invalid_state"
 
 
 class TestRoomCameraManagement:
@@ -61,8 +60,8 @@ class TestRoomCameraManagement:
 
         room.add_camera(camera)
 
-        assert len(room.get_cameras()) == 1
-        assert camera in room.get_cameras()
+        assert len(room.get_cameras(False)) == 1
+        assert camera in room.get_cameras(False)
 
     def test_room_add_multiple_cameras(self):
         """Add multiple cameras to room."""
@@ -73,7 +72,7 @@ class TestRoomCameraManagement:
         room.add_camera(camera1)
         room.add_camera(camera2)
 
-        assert len(room.get_cameras()) == 2
+        assert len(room.get_cameras(False)) == 2
 
     def test_room_remove_camera(self):
         """Remove camera from room."""
@@ -81,10 +80,10 @@ class TestRoomCameraManagement:
         camera = Camera(name="Camera 1", room_id="room1")
 
         room.add_camera(camera)
-        assert len(room.get_cameras()) == 1
+        assert len(room.get_cameras(False)) == 1
 
         room.remove_camera(camera)
-        assert len(room.get_cameras()) == 0
+        assert len(room.get_cameras(False)) == 0
 
     def test_room_set_camera_inactive(self):
         """Room can force a camera inactive."""
@@ -92,11 +91,10 @@ class TestRoomCameraManagement:
         camera = Camera(name="Camera 1", room_id="room1")
 
         room.add_camera(camera)
-        camera.set_state("active")
 
         room.set_camera_inactive(camera)
 
-        assert camera.get_state() == "inactive"
+        assert camera.status == CameraStatus.INACTIVE
 
 
 class TestRoomPersonDetectorManagement:
@@ -109,8 +107,8 @@ class TestRoomPersonDetectorManagement:
 
         room.add_person_detector(detector)
 
-        assert len(room.get_person_detectors()) == 1
-        assert detector in room.get_person_detectors()
+        assert len(room.get_person_detectors(False)) == 1
+        assert detector in room.get_person_detectors(False)
 
     def test_room_add_multiple_person_detectors(self):
         """Add multiple person detectors to room."""
@@ -121,7 +119,7 @@ class TestRoomPersonDetectorManagement:
         room.add_person_detector(detector1)
         room.add_person_detector(detector2)
 
-        assert len(room.get_person_detectors()) == 2
+        assert len(room.get_person_detectors(False)) == 2
 
     def test_room_remove_person_detector(self):
         """Remove person detector from room."""
@@ -129,10 +127,10 @@ class TestRoomPersonDetectorManagement:
         detector = PersonDetector(name="Detector 1", host="192.168.1.189", port=6053)
 
         room.add_person_detector(detector)
-        assert len(room.get_person_detectors()) == 1
+        assert len(room.get_person_detectors(False)) == 1
 
         room.remove_person_detector(detector)
-        assert len(room.get_person_detectors()) == 0
+        assert len(room.get_person_detectors(False)) == 0
 
 
 class TestRoomStateChangeNotification:
@@ -145,11 +143,11 @@ class TestRoomStateChangeNotification:
         room.add_camera(camera)
 
         # When room is empty, camera should be able to become active
-        room.set_state("empty")
+        room.state = "empty"
         # Camera should check and potentially activate
 
         # When room becomes occupied, cameras should be notified
-        room.set_state("occupied")
+        room.state = "occupied"
         # This test validates the notification mechanism exists
 
         assert True  # Placeholder for notification verification

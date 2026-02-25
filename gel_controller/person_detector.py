@@ -66,6 +66,14 @@ class PersonDetector:
         """Set detector name."""
         self._name = name
 
+    def get_name(self) -> str:
+        """Backward-compatible getter for detector name."""
+        return self.name
+
+    def set_name(self, name: str) -> None:
+        """Backward-compatible setter for detector name."""
+        self.name = name
+
     @property
     def heartbeat_timeout(self) -> float:
         """Get heartbeat timeout in seconds."""
@@ -76,6 +84,14 @@ class PersonDetector:
         """Set heartbeat timeout in seconds."""
         self._heartbeat_timeout = timeout
 
+    def get_heartbeat_timeout(self) -> float:
+        """Backward-compatible getter for heartbeat timeout."""
+        return self.heartbeat_timeout
+
+    def set_heartbeat_timeout(self, timeout: float) -> None:
+        """Backward-compatible setter for heartbeat timeout."""
+        self.heartbeat_timeout = timeout
+
     @property
     def room(self) -> Optional['Room']:
         """Get associated room."""
@@ -85,6 +101,14 @@ class PersonDetector:
     def room(self, room: 'Room') -> None:
         """Set associated room."""
         self._room = room
+
+    def get_room(self) -> Optional['Room']:
+        """Backward-compatible getter for associated room."""
+        return self.room
+
+    def set_room(self, room: 'Room') -> None:
+        """Backward-compatible setter for associated room."""
+        self.room = room
 
     ## immutable
     @property
@@ -98,11 +122,37 @@ class PersonDetector:
         """Get ESPHome device host."""
         return self._host
 
+    @host.setter
+    def host(self, host: str) -> None:
+        """Set ESPHome device host."""
+        self._host = host
+
+    def get_host(self) -> str:
+        """Backward-compatible getter for host."""
+        return self.host
+
+    def set_host(self, host: str) -> None:
+        """Backward-compatible setter for host."""
+        self.host = host
+
     # Port getters/setters
     @property
     def port(self) -> int:
         """Get ESPHome API port."""
         return self._port
+
+    @port.setter
+    def port(self, port: int) -> None:
+        """Set ESPHome API port."""
+        self._port = port
+
+    def get_port(self) -> int:
+        """Backward-compatible getter for port."""
+        return self.port
+
+    def set_port(self, port: int) -> None:
+        """Backward-compatible setter for port."""
+        self.port = port
 
     async def connect(self) -> None:
         """

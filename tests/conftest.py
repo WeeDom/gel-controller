@@ -6,12 +6,13 @@ import pytest
 from unittest.mock import Mock, MagicMock, patch, AsyncMock
 from datetime import datetime
 import asyncio
+import inspect
 
 
 @pytest.fixture
 def mock_aioesphomeapi():
     """Mock aioesphomeapi.APIClient for ESPHome device communication."""
-    with patch('aioesphomeapi.APIClient') as mock_client_class:
+    with patch('gel_controller.person_detector.APIClient') as mock_client_class:
         mock_client = MagicMock()
 
         # Create proper mock entities with actual string attributes
@@ -121,6 +122,29 @@ def event_loop():
     asyncio.set_event_loop(loop)
     yield loop
     loop.close()
+
+
+def pytest_pyfunc_call(pyfuncitem):
+    """Run async test functions using the event_loop fixture when plugin is unavailable."""
+    if not inspect.iscoroutinefunction(pyfuncitem.obj):
+        return None
+
+    loop = pyfuncitem.funcargs.get("event_loop")
+    created_loop = False
+    if loop is None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        created_loop = True
+
+    try:
+        arg_names = pyfuncitem._fixtureinfo.argnames
+        kwargs = {name: pyfuncitem.funcargs[name] for name in arg_names}
+        loop.run_until_complete(pyfuncitem.obj(**kwargs))
+    finally:
+        if created_loop:
+            loop.close()
+
+    return True
 
 
 def simulate_heartbeat_state(mock_client, heart_rate: float):

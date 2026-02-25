@@ -68,43 +68,6 @@ class TestPersonDetectorRoomInteraction:
     def test_detector_updates_room_state_occupied(self):
         """Heartbeat detected → room occupied."""
         room = Room(room_id="room1", name="Test Room")
-        detector = PersonDetector(name="Detector 1", device_pattern="seeed")
-        detector.set_room(room)
-
-        # Simulate heartbeat detection
-        detector.on_heartbeat_detected(110.0)
-
-        assert room.get_state() == "occupied"
-
-    def test_detector_updates_room_state_empty(self):
-        """No heartbeat → room empty."""
-        room = Room(room_id="room1", name="Test Room")
-        detector = PersonDetector(name="Detector 1", device_pattern="seeed")
-        detector.set_room(room)
-
-        room.set_state("occupied")  # Start occupied
-
-        # Simulate timeout (no heartbeat)
-        detector.on_heartbeat_timeout()
-
-        assert room.get_state() == "empty"
-
-    def test_detector_does_not_communicate_with_cameras(self):
-        """Detector only updates room state, not cameras directly."""
-        room = Room(room_id="room1", name="Test Room")
-        detector = PersonDetector(name="Detector 1", device_pattern="seeed")
-        from gel_controller.camera import Camera
-        camera = Camera(name="Camera 1", room_id="room1")
-
-        room.add_camera(camera)
-
-
-class TestPersonDetectorRoomInteraction:
-    """Test PersonDetector updating room state."""
-
-    def test_detector_updates_room_state_occupied(self):
-        """Heartbeat detected → room occupied."""
-        room = Room(room_id="room1", name="Test Room")
         detector = PersonDetector(name="Detector 1", host="192.168.1.189", port=6053)
         detector.set_room(room)
 

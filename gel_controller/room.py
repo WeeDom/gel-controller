@@ -60,6 +60,14 @@ class Room:
         """Set room ID."""
         self._room_id = id
 
+    def get_room_id(self) -> str:
+        """Backward-compatible getter for room ID."""
+        return self.room_id
+
+    def set_room_id(self, room_id: str) -> None:
+        """Backward-compatible setter for room ID."""
+        self.room_id = room_id
+
 
     @property
     def name(self) -> str:
@@ -71,10 +79,26 @@ class Room:
         """Set room name."""
         self._name = name
 
+    def get_name(self) -> str:
+        """Backward-compatible getter for room name."""
+        return self.name
+
+    def set_name(self, name: str) -> None:
+        """Backward-compatible setter for room name."""
+        self.name = name
+
     @property
     def state(self) -> Optional[str]:
         """Get current room state."""
         return self._state
+
+    def get_state(self) -> Optional[str]:
+        """Backward-compatible getter for room state."""
+        return self.state
+
+    def set_state(self, state: str) -> None:
+        """Backward-compatible setter for room state."""
+        self.state = state
 
     @state.setter
     def state(self, state: str) -> None:
@@ -157,21 +181,22 @@ class Room:
                 logger.error(f"Error capturing from {camera.name}: {e}")
 
     # Camera management
-    def get_cameras(self) -> List['Camera']:
+    def get_cameras(self, search_network: bool = True) -> List['Camera']:
         """Get list of cameras in this room."""
-        # scan network for espressif devices using nmap
-        cameras = discover_cameras()
-        for camera in cameras:
-            camera = Camera(
-                room_id= self.room_id,
-                name=camera["name"],
-                ip=camera["ip"],
-                port=camera["port"],
-                mac=camera["mac"],
+        if search_network:
+            # scan network for espressif devices using nmap
+            cameras = discover_cameras()
+            for camera in cameras:
+                camera = Camera(
+                    room_id= self.room_id,
+                    name=camera["name"],
+                    ip=camera["ip"],
+                    port=camera["port"],
+                    mac=camera["mac"],
                 url=camera["url"],
                 stream_url=camera["stream_url"]
             )
-            self.add_camera(camera)
+            self.add_camera(camera) # type: ignore
         return self._cameras.copy()
 
     def add_camera(self, camera: 'Camera') -> None:
@@ -216,17 +241,18 @@ class Room:
             logger.warning(f"Camera {camera.name} not found in room {self.name}")
 
     # Person detector management
-    def get_person_detectors(self) -> List['PersonDetector']:
+    def get_person_detectors(self, search_network: bool = True) -> List['PersonDetector']:
         """Get list of person detectors in this room."""
-        pds = discover_presence_sensors()
-        for pd in pds:
-            detector = PersonDetector(
-                name=pd["name"],
+        if search_network:
+            pds = discover_presence_sensors()
+            for pd in pds:
+                detector = PersonDetector(
+                    name=pd["name"],
                 host=pd["ip"],
                 port=pd["port"],
                 room=self  # Pass room reference so detector can update room state
             )
-            self.add_person_detector(detector)
+            self.add_person_detector(detector) # type: ignore
         return self._person_detectors.copy()
 
     def add_person_detector(self, detector: 'PersonDetector') -> None:
