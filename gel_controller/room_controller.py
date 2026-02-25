@@ -125,12 +125,12 @@ class RoomController:
                 camera.check_room_and_update_state(room)
 
                 # Output status if active
-                if camera.get_state() == "active":
+                if camera.state == "active":
                     camera.output_status()
 
                 # Sleep for poll interval
                 import time
-                time.sleep(camera.get_poll_interval())
+                time.sleep(camera.poll_interval)
         except Exception as e:
             logger.error(f"Error in camera loop for {camera.name}: {e}")
 
@@ -141,6 +141,7 @@ class RoomController:
         Args:
             detector: PersonDetector instance to monitor
         """
+        loop = None
         try:
             # Create event loop for this thread
             loop = asyncio.new_event_loop()
@@ -151,7 +152,8 @@ class RoomController:
         except Exception as e:
             logger.error(f"Error in detector loop for {detector.name}: {e}")
         finally:
-            loop.close()
+            if loop is not None:
+                loop.close()
 
     async def _async_detector_loop(self, detector: 'PersonDetector') -> None:
         """

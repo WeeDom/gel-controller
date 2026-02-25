@@ -72,7 +72,7 @@ class Room:
         self._name = name
 
     @property
-    def state(self) -> str:
+    def state(self) -> Optional[str]:
         """Get current room state."""
         return self._state
 
@@ -156,7 +156,7 @@ class Room:
             except Exception as e:
                 logger.error(f"Error capturing from {camera.name}: {e}")
 
-    def get_state(self) -> str:
+    def get_state(self) -> Optional[str]:
         """Get current room state."""
         return self._state
 

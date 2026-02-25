@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 from gel_controller.room_controller import RoomController
 from gel_controller.room import Room
 from gel_controller.camera import Camera
+from gel_controller.camera_state import CameraStatus
 from gel_controller.person_detector import PersonDetector
 
 
@@ -61,18 +62,18 @@ class TestDetectorCameraInteraction:
         """Flow: detector detects → room occupied → cameras off."""
         controller = RoomController()
         room = Room(room_id="room1", name="Test Room")
-        camera = Camera(name="Camera 1", room_id="room1")
+        camera = Camera(name="Camera 1", room_id="room1", initial_status=CameraStatus.INACTIVE)
         detector = PersonDetector(name="Detector 1", host="192.168.1.189", port=6053)
 
         controller.add_room(room)
         room.add_camera(camera)
         room.add_person_detector(detector)
-        detector.set_room(room)
+        detector.room = room
 
         # Initially room is empty, camera can be active
         room.set_state("empty")
         camera.check_room_and_update_state(room)
-        assert camera.get_state() == "active"
+        assert camera.status == CameraStatus.ACTIVE
 
         # Detector detects heartbeat
         detector.on_heartbeat_detected(110.0)
@@ -82,24 +83,24 @@ class TestDetectorCameraInteraction:
 
         # Camera checks and becomes inactive
         camera.check_room_and_update_state(room)
-        assert camera.get_state() == "inactive"
+        assert camera.status == CameraStatus.INACTIVE
 
     def test_detector_empty_enables_cameras(self):
         """Flow: detector timeout → room empty → cameras on."""
         controller = RoomController()
         room = Room(room_id="room1", name="Test Room")
-        camera = Camera(name="Camera 1", room_id="room1")
+        camera = Camera(name="Camera 1", room_id="room1", initial_status=CameraStatus.ACTIVE)
         detector = PersonDetector(name="Detector 1", host="192.168.1.189", port=6053)
 
         controller.add_room(room)
         room.add_camera(camera)
         room.add_person_detector(detector)
-        detector.set_room(room)
+        detector.room = room
 
         # Start with occupied room
         room.set_state("occupied")
         camera.check_room_and_update_state(room)
-        assert camera.get_state() == "inactive"
+        assert camera.status == CameraStatus.INACTIVE
 
         # Detector times out (no heartbeat)
         detector.on_heartbeat_timeout()
@@ -109,7 +110,7 @@ class TestDetectorCameraInteraction:
 
         # Camera checks and becomes active
         camera.check_room_and_update_state(room)
-        assert camera.get_state() == "active"
+        assert camera.status == CameraStatus.ACTIVE
 
 
 class TestMultipleDetectorsLogic:
@@ -118,15 +119,15 @@ class TestMultipleDetectorsLogic:
     def test_multiple_detectors_any_occupied(self):
         """Any detector occupied → cameras off."""
         room = Room(room_id="room1", name="Test Room")
-        camera = Camera(name="Camera 1", room_id="room1")
+        camera = Camera(name="Camera 1", room_id="room1", initial_status=CameraStatus.ACTIVE)
         detector1 = PersonDetector(name="Detector 1", host="192.168.1.189", port=6053)
         detector2 = PersonDetector(name="Detector 2", host="192.168.1.190", port=6053)
 
         room.add_camera(camera)
         room.add_person_detector(detector1)
         room.add_person_detector(detector2)
-        detector1.set_room(room)
-        detector2.set_room(room)
+        detector1.room = room
+        detector2.room = room
 
         # If ANY detector sees heartbeat, room is occupied
         detector1.on_heartbeat_detected(110.0)
@@ -134,20 +135,20 @@ class TestMultipleDetectorsLogic:
         assert room.get_state() == "occupied"
 
         camera.check_room_and_update_state(room)
-        assert camera.get_state() == "inactive"
+        assert camera.status == CameraStatus.INACTIVE
 
     def test_multiple_detectors_all_empty(self):
         """All detectors empty → cameras on."""
         room = Room(room_id="room1", name="Test Room")
-        camera = Camera(name="Camera 1", room_id="room1")
+        camera = Camera(name="Camera 1", room_id="room1", initial_status=CameraStatus.INACTIVE)
         detector1 = PersonDetector(name="Detector 1", host="192.168.1.189", port=6053)
         detector2 = PersonDetector(name="Detector 2", host="192.168.1.190", port=6053)
 
         room.add_camera(camera)
         room.add_person_detector(detector1)
         room.add_person_detector(detector2)
-        detector1.set_room(room)
-        detector2.set_room(room)
+        detector1.room = room
+        detector2.room = room
 
         # Set room occupied initially
         room.set_state("occupied")
@@ -168,19 +169,19 @@ class TestCameraActivationFlow:
     def test_cameras_check_before_activating(self):
         """Cameras must poll room before becoming active."""
         room = Room(room_id="room1", name="Test Room")
-        camera = Camera(name="Camera 1", room_id="room1")
+        camera = Camera(name="Camera 1", room_id="room1", initial_status=CameraStatus.INACTIVE)
 
         room.add_camera(camera)
         room.set_state("empty")
 
-        # Camera starts inactive (default)
-        assert camera.get_state() == "inactive"
+        # Camera starts inactive
+        assert camera.status == CameraStatus.INACTIVE
 
         # Camera must explicitly check room to activate
         camera.check_room_and_update_state(room)
 
         # Now it should be active
-        assert camera.get_state() == "active"
+        assert camera.status == CameraStatus.ACTIVE
 
 
 class TestParallelOperation:

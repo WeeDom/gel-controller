@@ -5,8 +5,11 @@ Camera - Represents a camera device that monitors a room.
 import logging
 import time
 from datetime import datetime
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from .camera_state import CameraState, CameraStatus
+
+if TYPE_CHECKING:
+    from .room import Room
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +35,8 @@ class Camera:
         url: Optional[str] = None,
         stream_url: Optional[str] = None,
         ip: Optional[str] = None,
-        port: Optional[int] = None
+        port: Optional[int] = None,
+        state: Optional[str] = None
     ):
         """
         Initialize a Camera.
@@ -55,9 +59,10 @@ class Camera:
         self._last_output_time = 0.0
         self._ip = ip
         self.mac = mac
-        self.url = None
-        self.stream_url = None
+        self.url = url
+        self.stream_url = stream_url
         self._port = port
+        self._state = state
     # Name property
     @property
     def name(self) -> str:
@@ -87,7 +92,7 @@ class Camera:
 
     # State property
     @property
-    def state(self) -> str:
+    def state(self) -> Optional[str]:
         """Get current camera state."""
         return self._state
 
