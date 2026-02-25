@@ -5,7 +5,11 @@ Camera State Management - Handles camera states and transitions.
 import logging
 from enum import Enum
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
+from weakref import ref, ReferenceType
+
+if TYPE_CHECKING:
+    from .camera import Camera
 
 logger = logging.getLogger(__name__)
 
@@ -41,17 +45,33 @@ class CameraState:
         CameraStatus.ERROR: [CameraStatus.CALIBRATING, CameraStatus.OFFLINE, CameraStatus.INACTIVE],
     }
 
-    def __init__(self, initial_status: CameraStatus = CameraStatus.OFFLINE):
+    def __init__(self, initial_status: CameraStatus = CameraStatus.OFFLINE, camera: Optional['Camera'] = None):
         """
         Initialize camera state.
 
         Args:
             initial_status: Starting status (default: OFFLINE)
+            camera: Optional parent camera reference
         """
         self._status = initial_status
         self._entered_at = datetime.now()
         self._history: List[tuple] = [(initial_status, self._entered_at)]
         self._error_message: Optional[str] = None
+        self._camera_ref: Optional[ReferenceType['Camera']] = None
+
+        if camera is not None:
+            self.set_camera(camera)
+
+    def set_camera(self, camera: 'Camera') -> None:
+        """Set parent camera reference for debugging/introspection."""
+        self._camera_ref = ref(camera)
+
+    @property
+    def camera(self) -> Optional['Camera']:
+        """Get parent camera if available."""
+        if self._camera_ref is None:
+            return None
+        return self._camera_ref()
 
     @property
     def status(self) -> CameraStatus:

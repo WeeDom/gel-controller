@@ -63,10 +63,12 @@ class Camera:
                 except ValueError:
                     logger.warning(f"Unknown camera state '{state}', using {initial_status.value}")
 
-        self._camera_state = CameraState(resolved_status)
+        self._camera_state = CameraState(resolved_status, camera=self)
         self._poll_interval = poll_interval
         self._output_interval = output_interval
         self._last_output_time = 0.0
+        self._saw_occupied = False
+        self.capture_count = 0
         self._ip = ip
         self.mac = mac
         self.url = url
@@ -157,18 +159,31 @@ class Camera:
         room_state = room.state
 
         if room_state == "occupied":
+            self._saw_occupied = True
             # Occupied room always forces camera inactive.
             if self.status != CameraStatus.INACTIVE:
                 self.set_status(CameraStatus.INACTIVE, "Room occupied")
             return
 
-        # Room is empty: activate camera when possible.
+        # Room is empty.
         if self.status == CameraStatus.OFFLINE:
-            # OFFLINE cannot transition directly to ACTIVE.
-            self.set_status(CameraStatus.INACTIVE, "Room empty")
+            self.set_status(CameraStatus.INACTIVE, "Room empty (offline->inactive)")
+            return
 
-        if self.status == CameraStatus.INACTIVE:
-            self.set_status(CameraStatus.ACTIVE, "Room empty")
+        if not self._saw_occupied:
+            if self.status != CameraStatus.INACTIVE:
+                self.set_status(CameraStatus.INACTIVE, "Room empty (idle)")
+            return
+
+        self.set_status(CameraStatus.ACTIVE, "Room empty after occupancy (capture)")
+        self.capture_image(room)
+        self.capture_count += 1
+        self.set_status(CameraStatus.INACTIVE, "Capture complete")
+        self._saw_occupied = False
+
+    def capture_image(self, room: 'Room') -> None:
+        """Capture a single image frame."""
+        logger.info(f"Camera {self._name} captured one frame in room {room.room_id}")
 
     def output_status(self) -> None:
         """

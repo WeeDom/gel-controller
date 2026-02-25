@@ -74,16 +74,17 @@ class TestCameraRoomInteraction:
     """Test Camera polling and interaction with Room."""
 
     def test_camera_polls_room_when_empty(self):
-        """Camera checks room state and becomes active when empty."""
+        """Camera stays inactive when room is empty without prior occupancy."""
         room = Room(room_id="room1", name="Test Room")
         camera = Camera(name="Test Camera", room_id="room1", initial_status=CameraStatus.INACTIVE)
 
         room.set_state("empty")
 
-        # Camera should check room and become active
+        # Camera should remain inactive in idle-empty state
         camera.check_room_and_update_state(room)
 
-        assert camera.status == CameraStatus.ACTIVE
+        assert camera.status == CameraStatus.INACTIVE
+        assert camera.capture_count == 0
 
     def test_camera_becomes_inactive_when_room_occupied(self):
         """Camera deactivates when room is occupied."""
@@ -162,15 +163,31 @@ class TestMultipleCameras:
 
         room.set_state("empty")
 
-        # Both cameras should be able to become active
+        # Idle empty should keep both cameras inactive
         camera1.check_room_and_update_state(room)
         camera2.check_room_and_update_state(room)
 
-        assert camera1.status == CameraStatus.ACTIVE
-        assert camera2.status == CameraStatus.ACTIVE
+        assert camera1.status == CameraStatus.INACTIVE
+        assert camera2.status == CameraStatus.INACTIVE
+        assert camera1.capture_count == 0
+        assert camera2.capture_count == 0
 
-        # Room can force one camera inactive while leaving other active
+        # Occupied then empty triggers one capture per camera
+        room.set_state("occupied")
+        camera1.check_room_and_update_state(room)
+        camera2.check_room_and_update_state(room)
+
+        room.set_state("empty")
+        camera1.check_room_and_update_state(room)
+        camera2.check_room_and_update_state(room)
+
+        assert camera1.status == CameraStatus.INACTIVE
+        assert camera2.status == CameraStatus.INACTIVE
+        assert camera1.capture_count == 1
+        assert camera2.capture_count == 1
+
+        # Room can still force one camera inactive explicitly
         room.set_camera_inactive(camera1)
 
         assert camera1.status == CameraStatus.INACTIVE
-        assert camera2.status == CameraStatus.ACTIVE
+        assert camera2.status == CameraStatus.INACTIVE

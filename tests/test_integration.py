@@ -31,17 +31,13 @@ class TestCompleteWorkflow:
         room.add_person_detector(detector)
         detector.room = room
 
-        # Initial state: room empty, cameras can activate
+        # Initial state: room empty, cameras remain inactive
         room.state = "empty"
         camera1.check_room_and_update_state(room)
         camera2.check_room_and_update_state(room)
 
-        assert camera1._camera_state.status == CameraStatus.ACTIVE
-        assert camera2._camera_state.status == CameraStatus.ACTIVE
-
-        camera1.output_status()
-        captured = capsys.readouterr()
-        assert "Camera 1 active" in captured.out
+        assert camera1._camera_state.status == CameraStatus.INACTIVE
+        assert camera2._camera_state.status == CameraStatus.INACTIVE
 
         # Person enters room
         detector.on_heartbeat_detected(110.0)
@@ -58,12 +54,14 @@ class TestCompleteWorkflow:
         detector.on_heartbeat_timeout()
         assert room.state == "empty"
 
-        # Cameras check and reactivate
+        # Cameras check, capture once, and return inactive
         camera1.check_room_and_update_state(room)
         camera2.check_room_and_update_state(room)
 
-        assert camera1.status == CameraStatus.ACTIVE
-        assert camera2.status == CameraStatus.ACTIVE
+        assert camera1.status == CameraStatus.INACTIVE
+        assert camera2.status == CameraStatus.INACTIVE
+        assert camera1.capture_count == 1
+        assert camera2.capture_count == 1
 
 
 class TestTwoRoomsIndependent:
@@ -102,12 +100,12 @@ class TestTwoRoomsIndependent:
         assert room_a.state == "occupied"
         assert room_b.state == "empty"
 
-        # Camera A should be inactive, Camera B active
+        # Camera A should be inactive, Camera B also inactive (idle empty)
         camera_a.check_room_and_update_state(room_a)
         camera_b.check_room_and_update_state(room_b)
 
         assert camera_a._camera_state.status == CameraStatus.INACTIVE
-        assert camera_b._camera_state.status == CameraStatus.ACTIVE
+        assert camera_b._camera_state.status == CameraStatus.INACTIVE
 
 
 class TestComplexMultiDeviceScenario:
@@ -142,11 +140,11 @@ class TestComplexMultiDeviceScenario:
         for camera in cameras:
             assert camera._camera_state.status == CameraStatus.OFFLINE
 
-        # Room empty, all cameras activate
+        # Room empty with no prior occupancy keeps cameras inactive
         room.state = "empty"
         for camera in cameras:
             camera.check_room_and_update_state(room)
-            assert camera._camera_state.status == CameraStatus.ACTIVE
+            assert camera._camera_state.status == CameraStatus.INACTIVE
 
         # One detector sees person
         detectors[0].on_heartbeat_detected(110.0)
@@ -162,10 +160,11 @@ class TestComplexMultiDeviceScenario:
         detectors[1].on_heartbeat_timeout()
         assert room.state == "empty"
 
-        # All cameras reactivate
+        # All cameras capture once and return inactive
         for camera in cameras:
             camera.check_room_and_update_state(room)
-            assert camera._camera_state.status == CameraStatus.ACTIVE
+            assert camera._camera_state.status == CameraStatus.INACTIVE
+            assert camera.capture_count == 1
 
 
 class TestFailureRecovery:
@@ -227,12 +226,9 @@ class TestCameraOutputScheduling:
     def test_camera_output_every_10_seconds(self, capsys):
         """Camera outputs status every 10 seconds when active."""
         room = Room(room_id="room1", name="Test Room")
-        camera = Camera(name="Camera 1", room_id="room1", output_interval=1)
+        camera = Camera(name="Camera 1", room_id="room1", state="active", output_interval=1)
 
         room.add_camera(camera)
-        room.state = "empty"
-        camera.check_room_and_update_state(room)
-
         assert camera._camera_state.status == CameraStatus.ACTIVE
 
         # Simulate multiple output cycles

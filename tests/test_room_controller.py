@@ -70,10 +70,10 @@ class TestDetectorCameraInteraction:
         room.add_person_detector(detector)
         detector.room = room
 
-        # Initially room is empty, camera can be active
+        # Initially room is empty, camera should remain inactive
         room.set_state("empty")
         camera.check_room_and_update_state(room)
-        assert camera.status == CameraStatus.ACTIVE
+        assert camera.status == CameraStatus.INACTIVE
 
         # Detector detects heartbeat
         detector.on_heartbeat_detected(110.0)
@@ -108,9 +108,10 @@ class TestDetectorCameraInteraction:
         # Room should be empty
         assert room.get_state() == "empty"
 
-        # Camera checks and becomes active
+        # Camera checks, captures once, and returns inactive
         camera.check_room_and_update_state(room)
-        assert camera.status == CameraStatus.ACTIVE
+        assert camera.status == CameraStatus.INACTIVE
+        assert camera.capture_count == 1
 
 
 class TestMultipleDetectorsLogic:
@@ -167,7 +168,7 @@ class TestCameraActivationFlow:
     """Test cameras checking before activating."""
 
     def test_cameras_check_before_activating(self):
-        """Cameras must poll room before becoming active."""
+        """Cameras remain inactive in empty rooms without prior occupancy."""
         room = Room(room_id="room1", name="Test Room")
         camera = Camera(name="Camera 1", room_id="room1", initial_status=CameraStatus.INACTIVE)
 
@@ -177,11 +178,10 @@ class TestCameraActivationFlow:
         # Camera starts inactive
         assert camera.status == CameraStatus.INACTIVE
 
-        # Camera must explicitly check room to activate
+        # Camera check in idle-empty should still keep camera inactive
         camera.check_room_and_update_state(room)
 
-        # Now it should be active
-        assert camera.status == CameraStatus.ACTIVE
+        assert camera.status == CameraStatus.INACTIVE
 
 
 class TestParallelOperation:
