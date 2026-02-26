@@ -172,7 +172,7 @@ class TestMultipleCameras:
         assert camera1.capture_count == 0
         assert camera2.capture_count == 0
 
-        # Occupied then empty triggers one capture per camera
+        # Occupied then empty via camera polling should not trigger capture
         room.set_state("occupied")
         camera1.check_room_and_update_state(room)
         camera2.check_room_and_update_state(room)
@@ -183,8 +183,8 @@ class TestMultipleCameras:
 
         assert camera1.status == CameraStatus.INACTIVE
         assert camera2.status == CameraStatus.INACTIVE
-        assert camera1.capture_count == 1
-        assert camera2.capture_count == 1
+        assert camera1.capture_count == 0
+        assert camera2.capture_count == 0
 
         # Room can still force one camera inactive explicitly
         room.set_camera_inactive(camera1)

@@ -30,7 +30,7 @@
 #if defined(LED_GPIO_NUM)
 #define CONFIG_LED_MAX_INTENSITY 255
 
-int led_duty = 0;
+int led_duty = CONFIG_LED_MAX_INTENSITY;
 bool isStreaming = false;
 
 #endif
@@ -49,7 +49,7 @@ httpd_handle_t stream_httpd = NULL;
 httpd_handle_t camera_httpd = NULL;
 
 // camera metadata to expose to controller
-static char device_name[32] = "cam1";
+static char device_name[32] = "cam2";
 static char room_id[32]    = "unknown";
 static float poll_interval = 10.0f;
 static char device_mac[18] = "";  // MAC address buffer
@@ -264,7 +264,8 @@ static esp_err_t stream_handler(httpd_req_t *req) {
 
 #if defined(LED_GPIO_NUM)
   isStreaming = true;
-  enable_led(true);
+  // Keep flash OFF during stream; only use it for still captures.
+  enable_led(false);
 #endif
 
   while (true) {
@@ -927,6 +928,9 @@ void startCameraServer() {
 void setupLedFlash() {
 #if defined(LED_GPIO_NUM)
   ledcAttach(LED_GPIO_NUM, 5000, 8);
+  // Force known OFF state at boot.
+  enable_led(false);
+  log_i("LED flash configured on GPIO %d (capture intensity: %d)", LED_GPIO_NUM, led_duty);
 #else
   log_i("LED flash is disabled -> LED_GPIO_NUM undefined");
 #endif

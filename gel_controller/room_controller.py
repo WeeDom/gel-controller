@@ -98,7 +98,7 @@ class RoomController:
         # Start all cameras and detectors in all rooms
         for room in self._rooms:
             # Start cameras
-            for camera in room.get_cameras():
+            for camera in room.get_cameras(search_network=False):
                 thread = threading.Thread(
                     target=self._run_camera_loop,
                     args=(camera, room),
@@ -110,7 +110,7 @@ class RoomController:
                 logger.debug(f"Started thread for camera: {camera.name}")
 
             # Start person detectors
-            for detector in room.get_person_detectors():
+            for detector in room.get_person_detectors(search_network=False):
                 thread = threading.Thread(
                     target=self._run_detector_loop,
                     args=(detector,),
@@ -268,7 +268,7 @@ class RoomController:
                 camera.check_room_and_update_state(room)
 
                 # Output status if active
-                if camera.state == "active":
+                if camera.status_value == "active":
                     camera.output_status()
 
                 # Sleep for poll interval

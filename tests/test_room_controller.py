@@ -109,10 +109,10 @@ class TestDetectorCameraInteraction:
         # Room should be empty
         assert room.get_state() == "empty"
 
-        # Camera checks, captures once, and returns inactive
+        # Camera checks and remains inactive; capture is room-coordinated
         camera.check_room_and_update_state(room)
         assert camera.status == CameraStatus.INACTIVE
-        assert camera.capture_count == 1
+        assert camera.capture_count == 0
 
 
 class TestMultipleDetectorsLogic:

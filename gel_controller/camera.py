@@ -150,8 +150,8 @@ class Camera:
         """
         Poll room state and update camera state accordingly.
 
-        Camera becomes active only if room is empty.
-        Camera becomes inactive if room is occupied.
+        Camera remains inactive for privacy. Capture triggering is coordinated
+        at room-transition level (occupied -> empty), not per camera poll loop.
 
         Args:
             room: Room instance to check
@@ -170,15 +170,9 @@ class Camera:
             self.set_status(CameraStatus.INACTIVE, "Room empty (offline->inactive)")
             return
 
-        if not self._saw_occupied:
-            if self.status != CameraStatus.INACTIVE:
-                self.set_status(CameraStatus.INACTIVE, "Room empty (idle)")
-            return
+        if self.status != CameraStatus.INACTIVE:
+            self.set_status(CameraStatus.INACTIVE, "Room empty (idle)")
 
-        self.set_status(CameraStatus.ACTIVE, "Room empty after occupancy (capture)")
-        self.capture_image(room)
-        self.capture_count += 1
-        self.set_status(CameraStatus.INACTIVE, "Capture complete")
         self._saw_occupied = False
 
     def capture_image(self, room: 'Room', tag: str = "capture") -> bool:
@@ -193,7 +187,7 @@ class Camera:
         capture_dir = Path("captures")
         capture_dir.mkdir(exist_ok=True)
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         capture_url = f"http://{self.ip}/capture"
 
         try:
@@ -210,6 +204,7 @@ class Camera:
                 filename = capture_dir / f"{tag}-{room.room_id}-{self._name}-{timestamp}.jpeg"
                 filename.write_bytes(response.content)
                 logger.info(f"✓ Saved capture to {filename}")
+                self.capture_count += 1
                 return True
             else:
                 logger.error(f"Failed to capture from {self._name}: HTTP {response.status_code}")

@@ -54,14 +54,14 @@ class TestCompleteWorkflow:
         detector.on_heartbeat_timeout()
         assert room.state == "empty"
 
-        # Cameras check, capture once, and return inactive
+        # Cameras check and remain inactive; capture is room-coordinated
         camera1.check_room_and_update_state(room)
         camera2.check_room_and_update_state(room)
 
         assert camera1.status == CameraStatus.INACTIVE
         assert camera2.status == CameraStatus.INACTIVE
-        assert camera1.capture_count == 1
-        assert camera2.capture_count == 1
+        assert camera1.capture_count == 0
+        assert camera2.capture_count == 0
 
 
 class TestTwoRoomsIndependent:
@@ -160,11 +160,11 @@ class TestComplexMultiDeviceScenario:
         detectors[1].on_heartbeat_timeout()
         assert room.state == "empty"
 
-        # All cameras capture once and return inactive
+        # All cameras remain inactive; capture is room-coordinated
         for camera in cameras:
             camera.check_room_and_update_state(room)
             assert camera._camera_state.status == CameraStatus.INACTIVE
-            assert camera.capture_count == 1
+            assert camera.capture_count == 0
 
 
 class TestFailureRecovery:

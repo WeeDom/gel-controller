@@ -44,6 +44,7 @@ class Room:
         # Capture timer management
         self._empty_timer: Optional[threading.Timer] = None
         self._capture_delay = 30.0  # 30 seconds in seconds
+        self._capture_done_for_empty_cycle = False
 
         # Validate and set initial state
         self.state = initial_state
@@ -124,6 +125,7 @@ class Room:
             if state == "empty" and old_state == "occupied":
                 self._start_empty_timer()
             elif state == "occupied" and old_state == "empty":
+                self._capture_done_for_empty_cycle = False
                 self._cancel_empty_timer()
 
     def _start_empty_timer(self) -> None:
@@ -146,6 +148,17 @@ class Room:
 
     def _trigger_capture(self) -> None:
         """Trigger all cameras to capture images after 3 minutes of empty room."""
+        self._empty_timer = None
+
+        if self._state != "empty":
+            logger.info(f"Room {self._name}: skipping capture trigger because room is no longer empty")
+            return
+
+        if self._capture_done_for_empty_cycle:
+            logger.info(f"Room {self._name}: capture already completed for this empty cycle")
+            return
+
+        self._capture_done_for_empty_cycle = True
         logger.info(f"Room {self._name}: 3 minutes elapsed, triggering camera captures")
         for camera in self._cameras:
             try:
@@ -161,16 +174,16 @@ class Room:
             # scan network for espressif devices using nmap
             cameras = discover_cameras()
             for camera in cameras:
-                camera = Camera(
-                    room_id= self.room_id,
+                discovered_camera = Camera(
+                    room_id=self.room_id,
                     name=camera["name"],
                     ip=camera["ip"],
                     port=camera["port"],
                     mac=camera["mac"],
-                url=camera["url"],
-                stream_url=camera["stream_url"]
-            )
-            self.add_camera(camera) # type: ignore
+                    url=camera["url"],
+                    stream_url=camera["stream_url"],
+                )
+                self.add_camera(discovered_camera)
         return self._cameras.copy()
 
     def add_camera(self, camera: 'Camera') -> None:
@@ -180,7 +193,22 @@ class Room:
         Args:
             camera: Camera instance to add
         """
-        if camera not in self._cameras:
+        is_duplicate = False
+        for existing in self._cameras:
+            if camera is existing:
+                is_duplicate = True
+                break
+            if camera.mac and existing.mac and camera.mac == existing.mac:
+                is_duplicate = True
+                break
+            if camera.ip and existing.ip and camera.ip == existing.ip:
+                is_duplicate = True
+                break
+            if getattr(camera, "url", None) and getattr(existing, "url", None) and camera.url == existing.url:
+                is_duplicate = True
+                break
+
+        if not is_duplicate:
             self._cameras.append(camera)
             logger.debug(f"Added camera {camera.name} to room {self._name}")
         else:
