@@ -188,9 +188,23 @@ class Camera:
         capture_dir.mkdir(exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        control_url = f"http://{self.ip}/control"
         capture_url = f"http://{self.ip}/capture"
 
         try:
+            control_response = requests.get(
+                control_url,
+                params={"var": "framesize", "val": 15},
+                timeout=5,
+                headers={
+                    'User-Agent': 'GEL-Controller/1.0'
+                }
+            )
+            if control_response.status_code != 200:
+                logger.warning(
+                    f"Failed to set framesize on {self._name}: HTTP {control_response.status_code}; continuing with capture"
+                )
+
             logger.info(f"Capturing from {self._name} at {capture_url}")
             response = requests.get(
                 capture_url,
