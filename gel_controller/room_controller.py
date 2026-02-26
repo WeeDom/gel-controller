@@ -4,7 +4,12 @@ RoomController - Orchestrates multiple rooms with cameras and person detectors.
 
 import asyncio
 import threading
-from typing import List, Dict, TYPE_CHECKING
+import json
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import List, Dict, TYPE_CHECKING, Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -30,6 +35,12 @@ class RoomController:
         self._threads: List[threading.Thread] = []
         self._event_loop = None
         self._shutdown_event = asyncio.Event()
+        self._control_server: Optional[ThreadingHTTPServer] = None
+        self._control_thread: Optional[threading.Thread] = None
+        self._control_host = "127.0.0.1"
+        self._control_port = 8765
+        self._baseline_db_path = Path("logs") / "baselines.db"
+        self._init_baseline_db()
 
     def get_rooms(self) -> List['Room']:
         """
@@ -80,6 +91,7 @@ class RoomController:
 
         self._running = True
         self._shutdown_event.clear()
+        self._start_control_server()
 
         logger.info(f"Starting RoomController with {len(self._rooms)} room(s)")
 
@@ -110,6 +122,137 @@ class RoomController:
                 logger.debug(f"Started thread for detector: {detector.name}")
 
         logger.info(f"Started {len(self._threads)} thread(s)")
+
+    def capture_baseline(self, room_id: Optional[str] = None) -> Dict[str, object]:
+        """
+        Trigger immediate baseline image capture.
+
+        Args:
+            room_id: Optional room ID to target a single room
+
+        Returns:
+            Summary dict with rooms/cameras targeted
+        """
+        selected_rooms = self._rooms
+        if room_id is not None:
+            selected_rooms = [room for room in self._rooms if room.room_id == room_id]
+
+        if not selected_rooms:
+            return {"ok": False, "message": "No matching rooms", "rooms": 0, "captures_requested": 0}
+
+        captures_requested = 0
+        captures_succeeded = 0
+        for room in selected_rooms:
+            for camera in room.get_cameras(search_network=False):
+                captured = camera.capture_image(room, tag="baseline")
+                captures_requested += 1
+                if captured:
+                    captures_succeeded += 1
+                    self._record_baseline_capture(
+                        camera_name=camera.name,
+                        captured_at=datetime.now().isoformat(),
+                        location=room.name,
+                    )
+
+        logger.info(
+            "Baseline capture requested for %s room(s), %s camera(s)",
+            len(selected_rooms),
+            captures_requested,
+        )
+        return {
+            "ok": True,
+            "rooms": len(selected_rooms),
+            "captures_requested": captures_requested,
+            "captures_succeeded": captures_succeeded,
+            "room_ids": [room.room_id for room in selected_rooms],
+        }
+
+    def _init_baseline_db(self) -> None:
+        """Initialize baseline SQLite database and schema."""
+        self._baseline_db_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(self._baseline_db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS baselines (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    camera_name TEXT NOT NULL,
+                    captured_at TEXT NOT NULL,
+                    location TEXT NOT NULL
+                )
+                """
+            )
+            conn.commit()
+
+    def _record_baseline_capture(self, camera_name: str, captured_at: str, location: str) -> None:
+        """Persist baseline metadata (camera name, date, location)."""
+        with sqlite3.connect(self._baseline_db_path) as conn:
+            conn.execute(
+                "INSERT INTO baselines (camera_name, captured_at, location) VALUES (?, ?, ?)",
+                (camera_name, captured_at, location),
+            )
+            conn.commit()
+
+    def _start_control_server(self) -> None:
+        """Start local HTTP control endpoint for runtime commands."""
+        if self._control_server is not None:
+            return
+
+        controller = self
+
+        class _ControlHandler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                if self.path != "/capture-baseline":
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+
+                content_length = int(self.headers.get("Content-Length", "0"))
+                payload = {}
+                if content_length > 0:
+                    raw = self.rfile.read(content_length)
+                    try:
+                        payload = json.loads(raw.decode("utf-8"))
+                    except json.JSONDecodeError:
+                        self.send_response(400)
+                        self.send_header("Content-Type", "application/json")
+                        self.end_headers()
+                        self.wfile.write(json.dumps({"ok": False, "error": "Invalid JSON"}).encode("utf-8"))
+                        return
+
+                room_id = payload.get("room_id")
+                result = controller.capture_baseline(room_id=room_id)
+
+                status = 200 if result.get("ok") else 404
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(result).encode("utf-8"))
+
+            def log_message(self, format, *args):
+                logger.debug("Control API: " + format, *args)
+
+        self._control_server = ThreadingHTTPServer((self._control_host, self._control_port), _ControlHandler)
+        self._control_thread = threading.Thread(
+            target=self._control_server.serve_forever,
+            name="Controller-Control-API",
+            daemon=True,
+        )
+        self._control_thread.start()
+        logger.info("Control API listening at http://%s:%s", self._control_host, self._control_port)
+
+    def _stop_control_server(self) -> None:
+        """Stop local HTTP control endpoint."""
+        if self._control_server is None:
+            return
+
+        self._control_server.shutdown()
+        self._control_server.server_close()
+        if self._control_thread is not None:
+            self._control_thread.join(timeout=2.0)
+
+        self._control_server = None
+        self._control_thread = None
+        logger.info("Control API stopped")
 
     def _run_camera_loop(self, camera: 'Camera', room: 'Room') -> None:
         """
@@ -192,6 +335,7 @@ class RoomController:
         logger.info("Shutting down RoomController...")
         self._running = False
         self._shutdown_event.set()
+        self._stop_control_server()
 
         # Wait for all threads to finish
         for thread in self._threads:

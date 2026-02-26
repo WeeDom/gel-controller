@@ -5,7 +5,6 @@ Room - Represents a physical room with state management.
 import logging
 import threading
 import time
-from datetime import datetime
 from typing import List, Optional
 from .devices.pir import discover_presence_sensors
 from .devices.camera import discover_cameras
@@ -148,34 +147,9 @@ class Room:
     def _trigger_capture(self) -> None:
         """Trigger all cameras to capture images after 3 minutes of empty room."""
         logger.info(f"Room {self._name}: 3 minutes elapsed, triggering camera captures")
-        import requests
-        from pathlib import Path
-
-        # Create captures directory if it doesn't exist
-        capture_dir = Path("captures")
-        capture_dir.mkdir(exist_ok=True)
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
         for camera in self._cameras:
             try:
-                capture_url = f"http://{camera.ip}/capture"
-                logger.info(f"Capturing from {camera.name} at {capture_url}")
-
-                response = requests.get(
-                    capture_url,
-                    timeout=10,
-                    headers={
-                        'User-Agent': 'GEL-Controller/1.0'
-                    }
-                )
-
-                if response.status_code == 200:
-                    filename = capture_dir / f"{camera.name}-{timestamp}.jpeg"
-                    filename.write_bytes(response.content)
-                    logger.info(f"✓ Saved capture to {filename}")
-                else:
-                    logger.error(f"Failed to capture from {camera.name}: HTTP {response.status_code}")
+                camera.capture_image(self)
 
             except Exception as e:
                 logger.error(f"Error capturing from {camera.name}: {e}")

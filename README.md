@@ -55,6 +55,28 @@ The script will:
 3. Connect to the device and monitor heartbeat data
 4. Output occupancy status changes
 
+### Capture baseline on demand
+
+When the controller is running, you can trigger immediate baseline captures from another terminal:
+
+```bash
+source venv/bin/activate
+python3 capture_baseline.py
+```
+
+Target a specific room:
+
+```bash
+python3 capture_baseline.py --room-id 101
+```
+
+This sends a local command to the controller (`POST /capture-baseline` on `127.0.0.1:8765`).
+
+Successful baseline captures are recorded in SQLite at `logs/baselines.db` in table `baselines` with:
+- `camera_name`
+- `captured_at`
+- `location`
+
 ### Example Output
 
 ```

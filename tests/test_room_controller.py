@@ -5,6 +5,7 @@ Test suite for RoomController class - Integration and coordination.
 import pytest
 import threading
 import time
+import sqlite3
 from unittest.mock import Mock, patch
 from gel_controller.room_controller import RoomController
 from gel_controller.room import Room
@@ -226,3 +227,36 @@ class TestGracefulShutdown:
 
         # Verify all threads stopped
         assert True  # Placeholder for shutdown test
+
+
+class TestBaselineCapturePersistence:
+    """Test baseline capture metadata persistence."""
+
+    def test_baseline_capture_writes_sqlite(self, tmp_path):
+        """Successful baseline capture writes camera/date/location to SQLite."""
+        controller = RoomController()
+        controller._baseline_db_path = tmp_path / "baselines.db"
+        controller._init_baseline_db()
+
+        room = Room(room_id="room1", name="Test Room")
+        camera = Camera(name="Camera 1", room_id="room1", ip="192.168.1.10")
+        room.add_camera(camera)
+        controller.add_room(room)
+
+        camera.capture_image = Mock(return_value=True)
+
+        result = controller.capture_baseline()
+
+        assert result["ok"] is True
+        assert result["captures_requested"] == 1
+        assert result["captures_succeeded"] == 1
+
+        with sqlite3.connect(controller._baseline_db_path) as conn:
+            row = conn.execute(
+                "SELECT camera_name, captured_at, location FROM baselines"
+            ).fetchone()
+
+        assert row is not None
+        assert row[0] == "Camera 1"
+        assert isinstance(row[1], str)
+        assert row[2] == "Test Room"

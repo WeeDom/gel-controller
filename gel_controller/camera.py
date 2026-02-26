@@ -181,9 +181,42 @@ class Camera:
         self.set_status(CameraStatus.INACTIVE, "Capture complete")
         self._saw_occupied = False
 
-    def capture_image(self, room: 'Room') -> None:
-        """Capture a single image frame."""
-        logger.info(f"Camera {self._name} captured one frame in room {room.room_id}")
+    def capture_image(self, room: 'Room', tag: str = "capture") -> bool:
+        """Capture a single image frame from the camera HTTP endpoint."""
+        if not self.ip:
+            logger.warning(f"Camera {self._name} has no IP; skipping capture")
+            return False
+
+        from pathlib import Path
+        import requests
+
+        capture_dir = Path("captures")
+        capture_dir.mkdir(exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        capture_url = f"http://{self.ip}/capture"
+
+        try:
+            logger.info(f"Capturing from {self._name} at {capture_url}")
+            response = requests.get(
+                capture_url,
+                timeout=10,
+                headers={
+                    'User-Agent': 'GEL-Controller/1.0'
+                }
+            )
+
+            if response.status_code == 200:
+                filename = capture_dir / f"{tag}-{room.room_id}-{self._name}-{timestamp}.jpeg"
+                filename.write_bytes(response.content)
+                logger.info(f"✓ Saved capture to {filename}")
+                return True
+            else:
+                logger.error(f"Failed to capture from {self._name}: HTTP {response.status_code}")
+                return False
+        except Exception as e:
+            logger.error(f"Error capturing from {self._name}: {e}")
+            return False
 
     def output_status(self) -> None:
         """
