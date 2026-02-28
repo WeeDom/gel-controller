@@ -6,6 +6,7 @@ import asyncio
 import threading
 import json
 import sqlite3
+import os
 from datetime import datetime
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -40,6 +41,9 @@ class RoomController:
         self._control_host = "127.0.0.1"
         self._control_port = 8765
         self._baseline_db_path = Path("logs") / "baselines.db"
+        self._spot_diff_enabled = os.getenv("ENABLE_SPOT_THE_DIFF", "1").lower() not in {"0", "false", "no"}
+        self._spot_diff_model = os.getenv("SPOT_THE_DIFF_MODEL", "claude-opus-4-5-20251101")
+        self._spot_diff_logs_dir = Path("logs") / "spot_the_diff"
         self._init_baseline_db()
 
     def get_rooms(self) -> List['Room']:
@@ -60,6 +64,7 @@ class RoomController:
         """
         if room not in self._rooms:
             self._rooms.append(room)
+            room.set_capture_callback(self._on_room_capture_complete)
             logger.info(f"Added room: {room.name} (ID: {room.room_id})")
         else:
             logger.warning(f"Room {room.name} already exists in controller")
@@ -73,6 +78,7 @@ class RoomController:
         """
         if room in self._rooms:
             self._rooms.remove(room)
+            room.set_capture_callback(None)
             logger.info(f"Removed room: {room.name} (ID: {room.room_id})")
         else:
             logger.warning(f"Room {room.name} not found in controller")
@@ -192,6 +198,86 @@ class RoomController:
             )
             conn.commit()
 
+    def _on_room_capture_complete(self, room: 'Room', captured_files: List[Path]) -> None:
+        """Kick off asynchronous spot-the-diff analysis for new capture files."""
+        if not self._spot_diff_enabled:
+            return
+
+        for changeset_path in captured_files:
+            thread = threading.Thread(
+                target=self._analyze_changeset,
+                args=(room, changeset_path),
+                name=f"SpotDiff-{room.room_id}-{changeset_path.stem}",
+                daemon=True,
+            )
+            thread.start()
+
+    def analyze_latest(self, room_id: Optional[str] = None) -> Dict[str, object]:
+        """Queue spot-the-diff for the latest capture image(s)."""
+        if not self._spot_diff_enabled:
+            return {"ok": False, "message": "Spot-the-diff is disabled", "queued": 0}
+
+        selected_rooms = self._rooms
+        if room_id is not None:
+            selected_rooms = [room for room in self._rooms if room.room_id == room_id]
+
+        if not selected_rooms:
+            return {"ok": False, "message": "No matching rooms", "queued": 0}
+
+        captures_dir = Path("captures")
+        queued = 0
+        queued_files: List[str] = []
+
+        for room in selected_rooms:
+            room_glob = f"capture-{room.room_id}-*.jp*"
+            candidates = list(captures_dir.glob(room_glob))
+            if not candidates:
+                continue
+
+            latest_changeset = max(candidates, key=lambda p: p.stat().st_mtime)
+            thread = threading.Thread(
+                target=self._analyze_changeset,
+                args=(room, latest_changeset),
+                name=f"SpotDiffManual-{room.room_id}-{latest_changeset.stem}",
+                daemon=True,
+            )
+            thread.start()
+            queued += 1
+            queued_files.append(str(latest_changeset))
+
+        return {
+            "ok": True,
+            "rooms": len(selected_rooms),
+            "queued": queued,
+            "queued_files": queued_files,
+        }
+
+    def _analyze_changeset(self, room: 'Room', changeset_path: Path) -> None:
+        """Run spot-the-diff against baselines for one changeset image."""
+        try:
+            from spot_the_diff import analyze_changeset_file
+        except Exception as e:
+            logger.error(f"Spot-the-diff unavailable: {e}")
+            return
+
+        try:
+            raw = analyze_changeset_file(
+                changeset_path=changeset_path,
+                room_id=room.room_id,
+                captures_dir=Path("captures"),
+                baseline_db=self._baseline_db_path,
+                model=self._spot_diff_model,
+            )
+        except Exception as e:
+            logger.error(f"Spot-the-diff failed for {changeset_path.name}: {e}")
+            return
+
+        self._spot_diff_logs_dir.mkdir(parents=True, exist_ok=True)
+        report_name = f"spot-the-diff-{room.room_id}-{changeset_path.stem}.json"
+        report_path = self._spot_diff_logs_dir / report_name
+        report_path.write_text(raw + "\n", encoding="utf-8")
+        logger.info(f"Spot-the-diff report saved to {report_path}")
+
     def _start_control_server(self) -> None:
         """Start local HTTP control endpoint for runtime commands."""
         if self._control_server is not None:
@@ -201,7 +287,8 @@ class RoomController:
 
         class _ControlHandler(BaseHTTPRequestHandler):
             def do_POST(self):
-                if self.path != "/capture-baseline":
+                request_path = self.path.split("?", 1)[0]
+                if request_path not in {"/capture-baseline", "/analyze-latest"}:
                     self.send_response(404)
                     self.end_headers()
                     return
@@ -220,7 +307,10 @@ class RoomController:
                         return
 
                 room_id = payload.get("room_id")
-                result = controller.capture_baseline(room_id=room_id)
+                if request_path == "/capture-baseline":
+                    result = controller.capture_baseline(room_id=room_id)
+                else:
+                    result = controller.analyze_latest(room_id=room_id)
 
                 status = 200 if result.get("ok") else 404
                 self.send_response(status)

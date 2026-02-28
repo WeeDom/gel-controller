@@ -23,6 +23,8 @@ from typing import Dict, List, Optional, Tuple
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
+DEFAULT_MODEL = "claude-opus-4-5-20251101"
+
 BASELINE_RE = re.compile(
     r"^baseline-(?P<room_id>[^-]+)-(?P<camera_name>.+)-(?P<timestamp>\d{8}_\d{6}(?:_\d+)?)\.jpe?g$",
     re.IGNORECASE,
@@ -230,12 +232,33 @@ def run_analysis(
     return response.content[0].text.strip()
 
 
+def analyze_changeset_file(
+    changeset_path: Path,
+    room_id: Optional[str] = None,
+    captures_dir: Path = Path("captures"),
+    baseline_db: Path = Path("logs/baselines.db"),
+    model: str = DEFAULT_MODEL,
+) -> str:
+    """Analyze a specific changeset against latest room baselines via Anthropic."""
+    if not captures_dir.exists():
+        raise FileNotFoundError(f"captures directory not found: {captures_dir}")
+
+    if not changeset_path.exists():
+        raise FileNotFoundError(f"changeset image not found: {changeset_path}")
+
+    baselines = select_latest_baselines(captures_dir, room_id, baseline_db)
+    if not baselines:
+        raise RuntimeError("No baseline images found for the requested scope")
+
+    return run_analysis(baselines, changeset_path, model)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compare latest baselines with a changeset via Anthropic")
     parser.add_argument("--captures-dir", default="captures", help="Directory containing capture images")
     parser.add_argument("--changeset", help="Path to changeset image; defaults to latest capture-*.jpeg")
     parser.add_argument("--room-id", help="Restrict to room ID")
-    parser.add_argument("--model", default="claude-opus-4-5-20251101", help="Anthropic model")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help="Anthropic model")
     parser.add_argument("--baseline-db", default="logs/baselines.db", help="Path to baseline sqlite db")
     parser.add_argument("--output", help="Optional path to write raw Anthropic response")
     args = parser.parse_args()
@@ -245,19 +268,19 @@ def main() -> int:
         print(f"captures directory not found: {captures_dir}", file=sys.stderr)
         return 1
 
-    baseline_db = Path(args.baseline_db)
-    baselines = select_latest_baselines(captures_dir, args.room_id, baseline_db)
-    if not baselines:
-        print("No baseline images found for the requested scope.", file=sys.stderr)
-        return 2
-
     changeset_path = Path(args.changeset) if args.changeset else pick_latest_changeset(captures_dir, args.room_id)
     if not changeset_path or not changeset_path.exists():
         print("No changeset image found. Provide --changeset or create a capture-*.jpeg first.", file=sys.stderr)
         return 3
 
     try:
-        raw = run_analysis(baselines, changeset_path, args.model)
+        raw = analyze_changeset_file(
+            changeset_path=changeset_path,
+            room_id=args.room_id,
+            captures_dir=captures_dir,
+            baseline_db=Path(args.baseline_db),
+            model=args.model,
+        )
     except Exception as exc:
         print(f"Anthropic request failed: {exc}", file=sys.stderr)
         return 4

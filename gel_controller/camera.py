@@ -6,6 +6,7 @@ import logging
 import time
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
+from pathlib import Path
 from .camera_state import CameraState, CameraStatus
 
 if TYPE_CHECKING:
@@ -175,13 +176,12 @@ class Camera:
 
         self._saw_occupied = False
 
-    def capture_image(self, room: 'Room', tag: str = "capture") -> bool:
+    def capture_image(self, room: 'Room', tag: str = "capture") -> Optional[Path]:
         """Capture a single image frame from the camera HTTP endpoint."""
         if not self.ip:
             logger.warning(f"Camera {self._name} has no IP; skipping capture")
-            return False
+            return None
 
-        from pathlib import Path
         import requests
 
         capture_dir = Path("captures")
@@ -219,13 +219,13 @@ class Camera:
                 filename.write_bytes(response.content)
                 logger.info(f"✓ Saved capture to {filename}")
                 self.capture_count += 1
-                return True
+                return filename
             else:
                 logger.error(f"Failed to capture from {self._name}: HTTP {response.status_code}")
-                return False
+                return None
         except Exception as e:
             logger.error(f"Error capturing from {self._name}: {e}")
-            return False
+            return None
 
     def output_status(self) -> None:
         """

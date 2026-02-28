@@ -5,7 +5,8 @@ Room - Represents a physical room with state management.
 import logging
 import threading
 import time
-from typing import List, Optional
+from pathlib import Path
+from typing import Callable, List, Optional
 from .devices.pir import discover_presence_sensors
 from .devices.camera import discover_cameras
 from .person_detector import PersonDetector
@@ -40,6 +41,7 @@ class Room:
         self._state = None
         self._cameras: List['Camera'] = []
         self._person_detectors: List['PersonDetector'] = []
+        self._capture_callback: Optional[Callable[['Room', List[Path]], None]] = None
 
         # Capture timer management
         self._empty_timer: Optional[threading.Timer] = None
@@ -160,12 +162,25 @@ class Room:
 
         self._capture_done_for_empty_cycle = True
         logger.info(f"Room {self._name}: 3 minutes elapsed, triggering camera captures")
+        captured_files: List[Path] = []
         for camera in self._cameras:
             try:
-                camera.capture_image(self)
+                captured_file = camera.capture_image(self)
+                if captured_file:
+                    captured_files.append(captured_file)
 
             except Exception as e:
                 logger.error(f"Error capturing from {camera.name}: {e}")
+
+        if self._capture_callback is not None:
+            try:
+                self._capture_callback(self, captured_files)
+            except Exception as e:
+                logger.error(f"Error in room capture callback for {self._name}: {e}")
+
+    def set_capture_callback(self, callback: Optional[Callable[['Room', List[Path]], None]]) -> None:
+        """Set callback invoked after a room capture set completes."""
+        self._capture_callback = callback
 
     # Camera management
     def get_cameras(self, search_network: bool = True) -> List['Camera']:
