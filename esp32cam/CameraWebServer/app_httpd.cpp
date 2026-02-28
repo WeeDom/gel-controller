@@ -21,6 +21,8 @@
 #include "camera_index.h"
 #include "board_config.h"
 #include <WiFi.h>
+#include <string.h>
+#include <vector>
 
 #if defined(ARDUINO_ARCH_ESP32) && defined(CONFIG_ARDUHAL_ESP_LOG)
 #include "esp32-hal-log.h"
@@ -49,16 +51,17 @@ httpd_handle_t stream_httpd = NULL;
 httpd_handle_t camera_httpd = NULL;
 
 // camera metadata to expose to controller
-static char device_name[32] = "cam2";
+static char device_name[32] = "cam1";
 static char room_id[32]    = "unknown";
+static char location[32]   = "unknown";
 static float poll_interval = 10.0f;
 static char device_mac[18] = "";  // MAC address buffer
 
 static esp_err_t props_get_handler(httpd_req_t *req) {
-  char resp[160];
+  char resp[220];
   int len = snprintf(resp, sizeof(resp),
-    "{\"name\":\"%s\",\"room_id\":\"%s\",\"poll_interval\":%.1f}",
-    device_name, room_id, poll_interval);
+    "{\"name\":\"%s\",\"room_id\":\"%s\",\"location\":\"%s\",\"poll_interval\":%.1f}",
+    device_name, room_id, location, poll_interval);
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   return httpd_resp_send(req, resp, len);
@@ -66,15 +69,27 @@ static esp_err_t props_get_handler(httpd_req_t *req) {
 
 // very light JSON parsing to keep deps out; swap for ArduinoJson if you prefer
 static esp_err_t props_set_handler(httpd_req_t *req) {
-  char buf[160];
+  char buf[220];
   int rlen = httpd_req_recv(req, buf, min((int)sizeof(buf) - 1, (int)req->content_len));
   if (rlen <= 0) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to read request");
   buf[rlen] = 0;
 
-  char name_tmp[32], room_tmp[32];
+  char name_tmp[32], room_tmp[32], location_tmp[32];
   float poll_tmp;
-  if (sscanf(buf, "{\"name\":\"%31[^\"]\",\"room_id\":\"%31[^\"]\",\"poll_interval\":%f}",
-             name_tmp, room_tmp, &poll_tmp) >= 3) {
+  if (sscanf(
+        buf,
+        "{\"name\":\"%31[^\"]\",\"room_id\":\"%31[^\"]\",\"location\":\"%31[^\"]\",\"poll_interval\":%f}",
+        name_tmp,
+        room_tmp,
+        location_tmp,
+        &poll_tmp
+      ) == 4) {
+    strlcpy(device_name, name_tmp, sizeof(device_name));
+    strlcpy(room_id, room_tmp, sizeof(room_id));
+    strlcpy(location, location_tmp, sizeof(location));
+    poll_interval = poll_tmp;
+  } else if (sscanf(buf, "{\"name\":\"%31[^\"]\",\"room_id\":\"%31[^\"]\",\"poll_interval\":%f}",
+                    name_tmp, room_tmp, &poll_tmp) == 3) {
     strlcpy(device_name, name_tmp, sizeof(device_name));
     strlcpy(room_id, room_tmp, sizeof(room_id));
     poll_interval = poll_tmp;
@@ -187,6 +202,101 @@ static size_t jpg_encode_stream(void *arg, size_t index, const void *data, size_
   return len;
 }
 
+static esp_err_t send_jpeg_with_exif(httpd_req_t *req, const uint8_t *jpeg_buf, size_t jpeg_len, const char *description) {
+  if (!jpeg_buf || jpeg_len < 2) {
+    return ESP_FAIL;
+  }
+
+  // If not a valid JPEG SOI, send raw bytes as-is.
+  if (!(jpeg_buf[0] == 0xFF && jpeg_buf[1] == 0xD8)) {
+    return httpd_resp_send(req, (const char *)jpeg_buf, jpeg_len);
+  }
+
+  const char *safe_desc = description ? description : "";
+  size_t desc_len = strlen(safe_desc) + 1;  // include trailing NUL for ASCII EXIF value
+
+  // EXIF APP1 payload:
+  // Exif\0\0 + TIFF header + IFD0 (1 entry) + next IFD offset + description bytes
+  const size_t exif_payload_len = 6 + 8 + 2 + 12 + 4 + desc_len;
+  // APP1 length field includes itself.
+  const size_t app1_len_field = exif_payload_len + 2;
+  if (app1_len_field > 0xFFFF) {
+    return ESP_FAIL;
+  }
+
+  std::vector<uint8_t> app1;
+  app1.reserve(2 + 2 + exif_payload_len);
+
+  // APP1 marker and length
+  app1.push_back(0xFF);
+  app1.push_back(0xE1);
+  app1.push_back((uint8_t)((app1_len_field >> 8) & 0xFF));
+  app1.push_back((uint8_t)(app1_len_field & 0xFF));
+
+  // "Exif\0\0"
+  app1.push_back('E');
+  app1.push_back('x');
+  app1.push_back('i');
+  app1.push_back('f');
+  app1.push_back(0x00);
+  app1.push_back(0x00);
+
+  // TIFF header (little-endian): "II", 42, IFD0 offset 8
+  app1.push_back(0x49);
+  app1.push_back(0x49);
+  app1.push_back(0x2A);
+  app1.push_back(0x00);
+  app1.push_back(0x08);
+  app1.push_back(0x00);
+  app1.push_back(0x00);
+  app1.push_back(0x00);
+
+  // IFD0 entry count = 1
+  app1.push_back(0x01);
+  app1.push_back(0x00);
+
+  // Tag: ImageDescription (0x010E), Type: ASCII (2)
+  app1.push_back(0x0E);
+  app1.push_back(0x01);
+  app1.push_back(0x02);
+  app1.push_back(0x00);
+
+  uint32_t count = (uint32_t)desc_len;
+  app1.push_back((uint8_t)(count & 0xFF));
+  app1.push_back((uint8_t)((count >> 8) & 0xFF));
+  app1.push_back((uint8_t)((count >> 16) & 0xFF));
+  app1.push_back((uint8_t)((count >> 24) & 0xFF));
+
+  // Offset to description string from start of TIFF header.
+  uint32_t value_offset = 0x1A;  // 8 (TIFF) + 2 (count) + 12 (entry) + 4 (next IFD)
+  app1.push_back((uint8_t)(value_offset & 0xFF));
+  app1.push_back((uint8_t)((value_offset >> 8) & 0xFF));
+  app1.push_back((uint8_t)((value_offset >> 16) & 0xFF));
+  app1.push_back((uint8_t)((value_offset >> 24) & 0xFF));
+
+  // Next IFD offset = 0
+  app1.push_back(0x00);
+  app1.push_back(0x00);
+  app1.push_back(0x00);
+  app1.push_back(0x00);
+
+  // ImageDescription value bytes
+  app1.insert(app1.end(), safe_desc, safe_desc + strlen(safe_desc));
+  app1.push_back(0x00);
+
+  esp_err_t res = ESP_OK;
+  res = httpd_resp_send_chunk(req, (const char *)jpeg_buf, 2);  // SOI
+  if (res != ESP_OK) return res;
+
+  res = httpd_resp_send_chunk(req, (const char *)app1.data(), app1.size());
+  if (res != ESP_OK) return res;
+
+  res = httpd_resp_send_chunk(req, (const char *)(jpeg_buf + 2), jpeg_len - 2);
+  if (res != ESP_OK) return res;
+
+  return httpd_resp_send_chunk(req, NULL, 0);
+}
+
 static esp_err_t capture_handler(httpd_req_t *req) {
   camera_fb_t *fb = NULL;
   esp_err_t res = ESP_OK;
@@ -217,6 +327,18 @@ static esp_err_t capture_handler(httpd_req_t *req) {
   snprintf(ts, 32, "%lld.%06ld", fb->timestamp.tv_sec, fb->timestamp.tv_usec);
   httpd_resp_set_hdr(req, "X-Timestamp", (const char *)ts);
 
+  char exif_description[200];
+  snprintf(
+    exif_description,
+    sizeof(exif_description),
+    "room_id=%s;location=%s;camera_name=%s;device_mac=%s;timestamp=%s",
+    room_id,
+    location,
+    device_name,
+    device_mac,
+    ts
+  );
+
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_INFO
   size_t fb_len = 0;
 #endif
@@ -224,13 +346,21 @@ static esp_err_t capture_handler(httpd_req_t *req) {
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_INFO
     fb_len = fb->len;
 #endif
-    res = httpd_resp_send(req, (const char *)fb->buf, fb->len);
+    res = send_jpeg_with_exif(req, fb->buf, fb->len, exif_description);
   } else {
-    jpg_chunking_t jchunk = {req, 0};
-    res = frame2jpg_cb(fb, 80, jpg_encode_stream, &jchunk) ? ESP_OK : ESP_FAIL;
-    httpd_resp_send_chunk(req, NULL, 0);
+    uint8_t *_jpg_buf = NULL;
+    size_t _jpg_buf_len = 0;
+    bool jpeg_converted = frame2jpg(fb, 80, &_jpg_buf, &_jpg_buf_len);
+    if (!jpeg_converted || !_jpg_buf) {
+      res = ESP_FAIL;
+    } else {
+      res = send_jpeg_with_exif(req, _jpg_buf, _jpg_buf_len, exif_description);
+    }
+    if (_jpg_buf) {
+      free(_jpg_buf);
+    }
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_INFO
-    fb_len = jchunk.len;
+    fb_len = _jpg_buf_len;
 #endif
   }
   esp_camera_fb_return(fb);

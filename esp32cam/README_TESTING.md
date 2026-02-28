@@ -51,7 +51,7 @@ curl http://localhost:8080/props
 
 curl -X POST http://localhost:8080/props \
   -H 'Content-Type: application/json' \
-  -d '{"name":"test_cam","room_id":"bedroom","poll_interval":5.0}'
+   -d '{"name":"test_cam","room_id":"bedroom","location":"upstairs","poll_interval":5.0}'
 ```
 
 ### Using Real Hardware
@@ -63,7 +63,7 @@ curl http://192.168.1.100/props
 # Update properties
 curl -X POST http://192.168.1.100/props \
   -H 'Content-Type: application/json' \
-  -d '{"name":"front_door","room_id":"entrance","poll_interval":15.0}'
+   -d '{"name":"front_door","room_id":"entrance","location":"front-porch","poll_interval":15.0}'
 ```
 
 ## Adding New Properties
