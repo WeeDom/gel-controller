@@ -77,6 +77,30 @@ Successful baseline captures are recorded in SQLite at `logs/baselines.db` in ta
 - `captured_at`
 - `location`
 
+### Build/flash ESP32 camera without Arduino GUI
+
+Use the headless deploy helper (requires `arduino-cli`):
+
+```bash
+source venv/bin/activate
+python3 deploy_esp32_camera.py \
+  --port 10.42.0.57 \
+  --protocol network \
+  --camera-name cam2 \
+  --room-id kitchen \
+  --location downstairs
+```
+
+This will:
+1. Compile `esp32cam/CameraWebServer`
+2. Upload firmware to the given port/IP
+3. Configure `/props` on the camera with `name`, `room_id`, `location` (and optional `--poll-interval`)
+
+Useful flags:
+- `--no-upload` compile only
+- `--no-compile` upload existing build output
+- `--device-ip <ip>` configure a different device than the upload port
+
 ### Example Output
 
 ```
