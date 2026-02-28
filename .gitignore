@@ -4,6 +4,8 @@ __pycache__
 *.pyc
 *.egg-info/
 ## esp noise
+.arduino-build/
+esp32cam/CameraWebServer/build/
 .esphome
 ## vscode stuff
 .vscode

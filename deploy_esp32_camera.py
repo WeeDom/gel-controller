@@ -4,8 +4,10 @@ import ipaddress
 import json
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 from pathlib import Path
 
 
@@ -17,9 +19,61 @@ def is_ip_address(value: str) -> bool:
         return False
 
 
+def normalize_host_like(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+
+    if "://" in text:
+        parsed = urlparse(text)
+        if parsed.hostname:
+            return parsed.hostname
+
+    if "/" in text and not text.startswith("/"):
+        text = text.split("/", 1)[0]
+
+    return text
+
+
+def is_network_target(value: str) -> bool:
+    if "://" in value:
+        return True
+
+    normalized = normalize_host_like(value)
+    if not normalized:
+        return False
+
+    if normalized.startswith("/dev/"):
+        return False
+    if normalized.upper().startswith("COM"):
+        return False
+    if is_ip_address(normalized):
+        return True
+    if normalized.endswith(".local"):
+        return True
+    if "." in normalized:
+        return True
+    return False
+
+
 def run_command(cmd: list[str]) -> None:
     print("+", " ".join(cmd))
     subprocess.run(cmd, check=True)
+
+
+def run_command_with_retries(cmd: list[str], retries: int, delay_seconds: float) -> None:
+    attempts = max(1, retries)
+    for attempt in range(1, attempts + 1):
+        try:
+            run_command(cmd)
+            return
+        except subprocess.CalledProcessError:
+            if attempt >= attempts:
+                raise
+            print(f"Upload failed (attempt {attempt}/{attempts}); retrying in {delay_seconds:.1f}s...")
+            time.sleep(delay_seconds)
 
 
 def read_props(device_ip: str, timeout: float) -> dict:
@@ -79,7 +133,11 @@ def main() -> int:
         help="Output directory for compiled artifacts",
     )
     parser.add_argument("--port", help="Upload port (serial like /dev/ttyUSB0 or OTA IP)")
-    parser.add_argument("--protocol", help="Optional upload protocol (e.g. network)")
+    parser.add_argument("--protocol", help="Optional upload protocol (pass only if required by your setup)")
+    parser.add_argument("--upload-password", help="OTA upload password")
+    parser.add_argument("--upload-retries", type=int, default=2, help="Number of upload attempts")
+    parser.add_argument("--retry-delay", type=float, default=2.0, help="Seconds to wait between upload retries")
+    parser.add_argument("--discovery-timeout", default="8s", help="arduino-cli discovery timeout for upload")
 
     parser.add_argument("--no-compile", action="store_true", help="Skip compile step")
     parser.add_argument("--no-upload", action="store_true", help="Skip upload step")
@@ -108,6 +166,8 @@ def main() -> int:
             "compile",
             "--fqbn",
             args.fqbn,
+            "--board-options",
+            f"PartitionScheme=min_spiffs",
             "--output-dir",
             str(build_dir),
             str(sketch_path),
@@ -118,6 +178,10 @@ def main() -> int:
         if not args.port:
             print("--port is required unless --no-upload is used", file=sys.stderr)
             return 2
+
+        upload_port = normalize_host_like(args.port) or args.port
+        upload_protocol = args.protocol
+
         upload_cmd = [
             args.arduino_cli,
             "upload",
@@ -125,18 +189,26 @@ def main() -> int:
             args.fqbn,
             "--input-dir",
             str(build_dir),
+            "--discovery-timeout",
+            args.discovery_timeout,
             "-p",
-            args.port,
+            upload_port,
             str(sketch_path),
         ]
-        if args.protocol:
-            upload_cmd.extend(["--protocol", args.protocol])
-        run_command(upload_cmd)
+        if upload_protocol:
+            upload_cmd.extend(["--protocol", upload_protocol])
+        if args.upload_password:
+            upload_cmd.extend(["--upload-field", f"password={args.upload_password}"])
+
+        if is_network_target(args.port) and not upload_protocol:
+            print("Info: using network upload without explicit --protocol (more reliable for ESP32 OTA).")
+        run_command_with_retries(upload_cmd, args.upload_retries, args.retry_delay)
 
     if not args.no_config:
-        device_ip = args.device_ip
-        if not device_ip and args.port and is_ip_address(args.port):
-            device_ip = args.port
+        device_ip = normalize_host_like(args.device_ip) if args.device_ip else None
+        normalized_port = normalize_host_like(args.port) if args.port else None
+        if not device_ip and normalized_port and is_network_target(args.port):
+            device_ip = normalized_port
 
         if not device_ip:
             print("Skipping /props config: no --device-ip provided and --port is not an IP")

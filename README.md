@@ -85,7 +85,6 @@ Use the headless deploy helper (requires `arduino-cli`):
 source venv/bin/activate
 python3 deploy_esp32_camera.py \
   --port 10.42.0.57 \
-  --protocol network \
   --camera-name cam2 \
   --room-id kitchen \
   --location downstairs
@@ -96,10 +95,19 @@ This will:
 2. Upload firmware to the given port/IP
 3. Configure `/props` on the camera with `name`, `room_id`, `location` (and optional `--poll-interval`)
 
+By default, compile uses `PartitionScheme=min_spiffs` (OTA-capable).
+
 Useful flags:
 - `--no-upload` compile only
 - `--no-compile` upload existing build output
 - `--device-ip <ip>` configure a different device than the upload port
+- `--upload-password <password>` pass OTA password non-interactively
+- `--partition-scheme <value>` override partition scheme (for example `huge_app`)
+
+Notes:
+- Use `--port 10.42.0.57` (or `.local` hostname), not `http://10.42.0.57`
+- For ESP32 OTA, omit `--protocol` unless you know you need it
+- If discovery is flaky, increase `--discovery-timeout` (for example `--discovery-timeout 15s`)
 
 ### Example Output
 
