@@ -1,11 +1,34 @@
 #! /usr/bin/env python3
 
+import os
 import signal
 import sys
 import logging
 from time import sleep
 from datetime import datetime
 from pathlib import Path
+
+
+def _maybe_reexec_with_venv_python() -> None:
+    """When run via sudo, prefer project venv Python so dependencies resolve."""
+    script_path = Path(__file__).resolve()
+    project_root = script_path.parent
+    venv_python = project_root / "venv" / "bin" / "python"
+
+    if os.geteuid() != 0:
+        return
+    if not venv_python.exists():
+        return
+
+    current_python = Path(sys.executable).resolve()
+    if current_python == venv_python.resolve():
+        return
+
+    os.execv(str(venv_python), [str(venv_python), str(script_path), *sys.argv[1:]])
+
+
+_maybe_reexec_with_venv_python()
+
 from gel_controller import Room, RoomController
 
 # Create logs directory
