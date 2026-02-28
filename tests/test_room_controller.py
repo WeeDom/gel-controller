@@ -6,7 +6,7 @@ import pytest
 import threading
 import time
 import sqlite3
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, AsyncMock
 from gel_controller.room_controller import RoomController
 from gel_controller.room import Room
 from gel_controller.camera import Camera
@@ -260,3 +260,40 @@ class TestBaselineCapturePersistence:
         assert row[0] == "Camera 1"
         assert isinstance(row[1], str)
         assert row[2] == "Test Room"
+
+
+class TestDetectorReconnect:
+    """Test detector reconnect behavior after transient failures."""
+
+    @pytest.mark.asyncio
+    async def test_detector_loop_retries_after_connect_error(self):
+        controller = RoomController()
+        controller._running = True
+        controller._detector_poll_interval = 0.01
+        controller._detector_reconnect_initial_delay = 0.01
+        controller._detector_reconnect_max_delay = 0.02
+
+        detector = Mock()
+        detector.name = "Detector 1"
+
+        connect_calls = {"count": 0}
+
+        async def connect_side_effect():
+            connect_calls["count"] += 1
+            if connect_calls["count"] == 1:
+                raise RuntimeError("temporary network failure")
+
+        def check_timeout_side_effect():
+            controller._running = False
+
+        detector.connect = AsyncMock(side_effect=connect_side_effect)
+        detector.subscribe_to_states = AsyncMock()
+        detector.check_heartbeat_timeout = Mock(side_effect=check_timeout_side_effect)
+        detector.disconnect = AsyncMock()
+
+        await controller._async_detector_loop(detector)
+
+        assert connect_calls["count"] >= 2
+        detector.subscribe_to_states.assert_awaited_once()
+        detector.check_heartbeat_timeout.assert_called_once()
+        assert detector.disconnect.await_count >= 2

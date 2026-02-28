@@ -44,6 +44,9 @@ class RoomController:
         self._spot_diff_enabled = os.getenv("ENABLE_SPOT_THE_DIFF", "1").lower() not in {"0", "false", "no"}
         self._spot_diff_model = os.getenv("SPOT_THE_DIFF_MODEL", "claude-opus-4-5-20251101")
         self._spot_diff_logs_dir = Path("logs") / "spot_the_diff"
+        self._detector_poll_interval = float(os.getenv("DETECTOR_POLL_INTERVAL", "1.0"))
+        self._detector_reconnect_initial_delay = float(os.getenv("DETECTOR_RECONNECT_INITIAL_DELAY", "2.0"))
+        self._detector_reconnect_max_delay = float(os.getenv("DETECTOR_RECONNECT_MAX_DELAY", "60.0"))
         self._init_baseline_db()
 
     def get_rooms(self) -> List['Room']:
@@ -395,22 +398,35 @@ class RoomController:
         Args:
             detector: PersonDetector instance to monitor
         """
-        try:
-            # Connect to device
-            await detector.connect()
+        reconnect_delay = max(0.1, self._detector_reconnect_initial_delay)
 
-            # Subscribe to state changes
-            await detector.subscribe_to_states()
+        while self._running:
+            try:
+                await detector.connect()
+                await detector.subscribe_to_states()
+                reconnect_delay = max(0.1, self._detector_reconnect_initial_delay)
 
-            # Keep running and checking for timeouts
-            while self._running:
-                detector.check_heartbeat_timeout()
-                await asyncio.sleep(1)  # Check every second
+                while self._running:
+                    detector.check_heartbeat_timeout()
+                    await asyncio.sleep(self._detector_poll_interval)
 
-        except Exception as e:
-            logger.error(f"Error in async detector loop for {detector.name}: {e}")
-        finally:
-            await detector.disconnect()
+            except Exception as e:
+                if self._running:
+                    logger.warning(
+                        "Detector %s loop error: %s. Reconnecting in %.1fs",
+                        detector.name,
+                        e,
+                        reconnect_delay,
+                    )
+            finally:
+                try:
+                    await detector.disconnect()
+                except Exception as e:
+                    logger.debug("Detector %s disconnect during retry failed: %s", detector.name, e)
+
+            if self._running:
+                await asyncio.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 2, max(reconnect_delay, self._detector_reconnect_max_delay))
 
     def shutdown(self) -> None:
         """
