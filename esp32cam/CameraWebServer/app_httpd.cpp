@@ -23,6 +23,8 @@
 #include <WiFi.h>
 #include <string.h>
 #include <vector>
+#include <time.h>
+#include <mbedtls/md.h>
 
 #if defined(ARDUINO_ARCH_ESP32) && defined(CONFIG_ARDUHAL_ESP_LOG)
 #include "esp32-hal-log.h"
@@ -57,7 +59,292 @@ static char location[32]   = "unknown";
 static float poll_interval = 10.0f;
 static char device_mac[18] = "";  // MAC address buffer
 
+// Shared-secret auth (Phase 1)
+// Configure these to match controller-side values.
+static const bool AUTH_ENABLED = true;
+static const char *AUTH_DEFAULT_CONTROLLER_ID = "gel-controller-1";
+static const char *AUTH_DEFAULT_SHARED_SECRET = "niapcinimod";
+static const long AUTH_MAX_SKEW_SECONDS = 45;
+static const size_t AUTH_NONCE_CACHE_SIZE = 32;
+
+// Pairing flow (Phase 2)
+static const long PAIRING_WINDOW_SECONDS = 300;
+static long pairing_open_until = 0;
+
+static char auth_controller_id[48] = "gel-controller-1";
+static char auth_shared_secret[96] = "niapcinimod";
+
+typedef struct {
+  char nonce[40];
+  long seen_at;
+} auth_nonce_entry_t;
+
+static auth_nonce_entry_t auth_nonce_cache[AUTH_NONCE_CACHE_SIZE];
+static size_t auth_nonce_cache_pos = 0;
+
+static void clear_nonce_cache() {
+  memset(auth_nonce_cache, 0, sizeof(auth_nonce_cache));
+  auth_nonce_cache_pos = 0;
+}
+
+static bool is_pairing_open() {
+  long now_ts = (long)time(NULL);
+  return pairing_open_until > now_ts;
+}
+
+static void open_pairing_window() {
+  long now_ts = (long)time(NULL);
+  pairing_open_until = now_ts + PAIRING_WINDOW_SECONDS;
+}
+
+static void close_pairing_window() {
+  pairing_open_until = 0;
+}
+
+static long pairing_seconds_left() {
+  long now_ts = (long)time(NULL);
+  long remaining = pairing_open_until - now_ts;
+  return remaining > 0 ? remaining : 0;
+}
+
+static const char *method_to_string(int method) {
+  switch (method) {
+    case HTTP_GET: return "GET";
+    case HTTP_POST: return "POST";
+    case HTTP_PUT: return "PUT";
+    case HTTP_DELETE: return "DELETE";
+    case HTTP_HEAD: return "HEAD";
+    case HTTP_PATCH: return "PATCH";
+    default: return "OTHER";
+  }
+}
+
+static bool get_header_value(httpd_req_t *req, const char *name, char *out, size_t out_len) {
+  size_t hdr_len = httpd_req_get_hdr_value_len(req, name);
+  if (hdr_len == 0 || hdr_len + 1 > out_len) {
+    return false;
+  }
+  if (httpd_req_get_hdr_value_str(req, name, out, out_len) != ESP_OK) {
+    return false;
+  }
+  return true;
+}
+
+static bool get_query_string(httpd_req_t *req, char *out, size_t out_len) {
+  size_t query_len = httpd_req_get_url_query_len(req);
+  if (query_len == 0) {
+    out[0] = '\0';
+    return true;
+  }
+  if (query_len + 1 > out_len) {
+    return false;
+  }
+  return httpd_req_get_url_query_str(req, out, out_len) == ESP_OK;
+}
+
+static bool timing_safe_hex_equals(const char *a, const char *b) {
+  size_t al = strlen(a);
+  size_t bl = strlen(b);
+  if (al != bl) {
+    return false;
+  }
+  unsigned char diff = 0;
+  for (size_t i = 0; i < al; ++i) {
+    diff |= (unsigned char)(a[i] ^ b[i]);
+  }
+  return diff == 0;
+}
+
+static bool nonce_seen_recently(const char *nonce, long now_ts) {
+  for (size_t i = 0; i < AUTH_NONCE_CACHE_SIZE; ++i) {
+    if (auth_nonce_cache[i].nonce[0] == '\0') {
+      continue;
+    }
+    if (strcmp(auth_nonce_cache[i].nonce, nonce) == 0) {
+      if (labs(now_ts - auth_nonce_cache[i].seen_at) <= AUTH_MAX_SKEW_SECONDS) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+static void remember_nonce(const char *nonce, long now_ts) {
+  strlcpy(auth_nonce_cache[auth_nonce_cache_pos].nonce, nonce, sizeof(auth_nonce_cache[auth_nonce_cache_pos].nonce));
+  auth_nonce_cache[auth_nonce_cache_pos].seen_at = now_ts;
+  auth_nonce_cache_pos = (auth_nonce_cache_pos + 1) % AUTH_NONCE_CACHE_SIZE;
+}
+
+static bool hmac_sha256_hex(const char *secret, const char *message, char *out_hex, size_t out_hex_len) {
+  if (out_hex_len < 65) {
+    return false;
+  }
+
+  unsigned char digest[32];
+  const mbedtls_md_info_t *md_info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (!md_info) {
+    return false;
+  }
+
+  int rc = mbedtls_md_hmac(md_info,
+                           (const unsigned char *)secret,
+                           strlen(secret),
+                           (const unsigned char *)message,
+                           strlen(message),
+                           digest);
+  if (rc != 0) {
+    return false;
+  }
+
+  for (size_t i = 0; i < sizeof(digest); ++i) {
+    snprintf(out_hex + (i * 2), 3, "%02x", digest[i]);
+  }
+  out_hex[64] = '\0';
+  return true;
+}
+
+static esp_err_t send_auth_error(httpd_req_t *req, const char *message, const char *code) {
+  httpd_resp_set_status(req, code);
+  httpd_resp_set_type(req, "application/json");
+  return httpd_resp_sendstr(req, message);
+}
+
+static bool authorize_request(httpd_req_t *req) {
+  if (!AUTH_ENABLED) {
+    return true;
+  }
+
+  char controller_id[48];
+  char timestamp_str[24];
+  char nonce[40];
+  char signature[96];
+  char query[160];
+
+  if (!get_header_value(req, "X-Controller-Id", controller_id, sizeof(controller_id))
+      || !get_header_value(req, "X-Timestamp", timestamp_str, sizeof(timestamp_str))
+      || !get_header_value(req, "X-Nonce", nonce, sizeof(nonce))
+      || !get_header_value(req, "X-Signature", signature, sizeof(signature))) {
+    send_auth_error(req, "{\"error\":\"missing auth headers\"}", "401 Unauthorized");
+    return false;
+  }
+
+  if (strcmp(controller_id, auth_controller_id) != 0) {
+    send_auth_error(req, "{\"error\":\"controller mismatch\"}", "403 Forbidden");
+    return false;
+  }
+
+  char *endptr = NULL;
+  long request_ts = strtol(timestamp_str, &endptr, 10);
+  if (endptr == timestamp_str || *endptr != '\0') {
+    send_auth_error(req, "{\"error\":\"invalid timestamp\"}", "401 Unauthorized");
+    return false;
+  }
+
+  long now_ts = (long)time(NULL);
+  if (now_ts <= 0 || labs(now_ts - request_ts) > AUTH_MAX_SKEW_SECONDS) {
+    send_auth_error(req, "{\"error\":\"stale timestamp\"}", "408 Request Timeout");
+    return false;
+  }
+
+  if (!get_query_string(req, query, sizeof(query))) {
+    send_auth_error(req, "{\"error\":\"query too long\"}", "400 Bad Request");
+    return false;
+  }
+
+  if (nonce_seen_recently(nonce, now_ts)) {
+    send_auth_error(req, "{\"error\":\"nonce replay\"}", "409 Conflict");
+    return false;
+  }
+
+  char signing_input[320];
+  snprintf(
+    signing_input,
+    sizeof(signing_input),
+    "%s\n%s\n%s\n%s\n%s",
+    method_to_string(req->method),
+    req->uri,
+    query,
+    timestamp_str,
+    nonce
+  );
+
+  char expected_sig[65];
+  if (!hmac_sha256_hex(auth_shared_secret, signing_input, expected_sig, sizeof(expected_sig))) {
+    send_auth_error(req, "{\"error\":\"signature generation failed\"}", "500 Internal Server Error");
+    return false;
+  }
+
+  if (!timing_safe_hex_equals(signature, expected_sig)) {
+    send_auth_error(req, "{\"error\":\"invalid signature\"}", "401 Unauthorized");
+    return false;
+  }
+
+  remember_nonce(nonce, now_ts);
+  return true;
+}
+
+static esp_err_t pair_status_handler(httpd_req_t *req) {
+  char resp[220];
+  int len = snprintf(
+    resp,
+    sizeof(resp),
+    "{\"device_id\":\"%s\",\"pairing_open\":%s,\"pairing_seconds_left\":%ld,\"controller_id\":\"%s\"}",
+    device_mac,
+    is_pairing_open() ? "true" : "false",
+    pairing_seconds_left(),
+    auth_controller_id
+  );
+  httpd_resp_set_type(req, "application/json");
+  return httpd_resp_send(req, resp, len);
+}
+
+static esp_err_t pair_open_handler(httpd_req_t *req) {
+  if (!authorize_request(req)) {
+    return ESP_FAIL;
+  }
+
+  open_pairing_window();
+  char resp[120];
+  int len = snprintf(resp, sizeof(resp), "{\"ok\":true,\"pairing_seconds_left\":%ld}", pairing_seconds_left());
+  httpd_resp_set_type(req, "application/json");
+  return httpd_resp_send(req, resp, len);
+}
+
+static esp_err_t pair_claim_handler(httpd_req_t *req) {
+  if (!is_pairing_open()) {
+    return send_auth_error(req, "{\"error\":\"pairing is closed\"}", "403 Forbidden");
+  }
+
+  char buf[260];
+  int rlen = httpd_req_recv(req, buf, min((int)sizeof(buf) - 1, (int)req->content_len));
+  if (rlen <= 0) {
+    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to read request");
+  }
+  buf[rlen] = 0;
+
+  char controller_tmp[48];
+  char secret_tmp[96];
+  if (sscanf(buf, "{\"controller_id\":\"%47[^\"]\",\"shared_secret\":\"%95[^\"]\"}", controller_tmp, secret_tmp) != 2) {
+    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid payload");
+  }
+
+  if (strlen(controller_tmp) < 3 || strlen(secret_tmp) < 8) {
+    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Values too short");
+  }
+
+  strlcpy(auth_controller_id, controller_tmp, sizeof(auth_controller_id));
+  strlcpy(auth_shared_secret, secret_tmp, sizeof(auth_shared_secret));
+  clear_nonce_cache();
+  close_pairing_window();
+
+  httpd_resp_set_type(req, "application/json");
+  return httpd_resp_sendstr(req, "{\"ok\":true,\"state\":\"paired_locked\"}");
+}
+
 static esp_err_t props_get_handler(httpd_req_t *req) {
+  if (!authorize_request(req)) {
+    return ESP_FAIL;
+  }
   char resp[220];
   int len = snprintf(resp, sizeof(resp),
     "{\"name\":\"%s\",\"room_id\":\"%s\",\"location\":\"%s\",\"poll_interval\":%.1f}",
@@ -69,6 +356,9 @@ static esp_err_t props_get_handler(httpd_req_t *req) {
 
 // very light JSON parsing to keep deps out; swap for ArduinoJson if you prefer
 static esp_err_t props_set_handler(httpd_req_t *req) {
+  if (!authorize_request(req)) {
+    return ESP_FAIL;
+  }
   char buf[220];
   int rlen = httpd_req_recv(req, buf, min((int)sizeof(buf) - 1, (int)req->content_len));
   if (rlen <= 0) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to read request");
@@ -152,6 +442,9 @@ void enable_led(bool en) {  // Turn LED On or Off
 #endif
 
 static esp_err_t bmp_handler(httpd_req_t *req) {
+  if (!authorize_request(req)) {
+    return ESP_FAIL;
+  }
   camera_fb_t *fb = NULL;
   esp_err_t res = ESP_OK;
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_INFO
@@ -298,6 +591,9 @@ static esp_err_t send_jpeg_with_exif(httpd_req_t *req, const uint8_t *jpeg_buf, 
 }
 
 static esp_err_t capture_handler(httpd_req_t *req) {
+  if (!authorize_request(req)) {
+    return ESP_FAIL;
+  }
   camera_fb_t *fb = NULL;
   esp_err_t res = ESP_OK;
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_INFO
@@ -372,6 +668,9 @@ static esp_err_t capture_handler(httpd_req_t *req) {
 }
 
 static esp_err_t stream_handler(httpd_req_t *req) {
+  if (!authorize_request(req)) {
+    return ESP_FAIL;
+  }
   camera_fb_t *fb = NULL;
   struct timeval _timestamp;
   esp_err_t res = ESP_OK;
@@ -486,6 +785,9 @@ static esp_err_t parse_get(httpd_req_t *req, char **obuf) {
 }
 
 static esp_err_t cmd_handler(httpd_req_t *req) {
+  if (!authorize_request(req)) {
+    return ESP_FAIL;
+  }
   char *buf = NULL;
   char variable[32];
   char value[32];
@@ -582,6 +884,9 @@ static int print_reg(char *p, sensor_t *s, uint16_t reg, uint32_t mask) {
 }
 
 static esp_err_t status_handler(httpd_req_t *req) {
+  if (!authorize_request(req)) {
+    return ESP_FAIL;
+  }
   static char json_response[1024];
 
   sensor_t *s = esp_camera_sensor_get();
@@ -657,6 +962,9 @@ static esp_err_t status_handler(httpd_req_t *req) {
 }
 
 static esp_err_t xclk_handler(httpd_req_t *req) {
+  if (!authorize_request(req)) {
+    return ESP_FAIL;
+  }
   char *buf = NULL;
   char _xclk[32];
 
@@ -684,6 +992,9 @@ static esp_err_t xclk_handler(httpd_req_t *req) {
 }
 
 static esp_err_t reg_handler(httpd_req_t *req) {
+  if (!authorize_request(req)) {
+    return ESP_FAIL;
+  }
   char *buf = NULL;
   char _reg[32];
   char _mask[32];
@@ -716,6 +1027,9 @@ static esp_err_t reg_handler(httpd_req_t *req) {
 }
 
 static esp_err_t greg_handler(httpd_req_t *req) {
+  if (!authorize_request(req)) {
+    return ESP_FAIL;
+  }
   char *buf = NULL;
   char _reg[32];
   char _mask[32];
@@ -754,6 +1068,9 @@ static int parse_get_var(char *buf, const char *key, int def) {
 }
 
 static esp_err_t pll_handler(httpd_req_t *req) {
+  if (!authorize_request(req)) {
+    return ESP_FAIL;
+  }
   char *buf = NULL;
 
   if (parse_get(req, &buf) != ESP_OK) {
@@ -782,6 +1099,9 @@ static esp_err_t pll_handler(httpd_req_t *req) {
 }
 
 static esp_err_t win_handler(httpd_req_t *req) {
+  if (!authorize_request(req)) {
+    return ESP_FAIL;
+  }
   char *buf = NULL;
 
   if (parse_get(req, &buf) != ESP_OK) {
@@ -817,6 +1137,9 @@ static esp_err_t win_handler(httpd_req_t *req) {
 }
 
 static esp_err_t index_handler(httpd_req_t *req) {
+  if (!authorize_request(req)) {
+    return ESP_FAIL;
+  }
   httpd_resp_set_type(req, "text/html");
   httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
   httpd_resp_set_hdr(req, "X-Device-Type", "gel-camera");
@@ -840,6 +1163,9 @@ static esp_err_t index_handler(httpd_req_t *req) {
 }
 
 static esp_err_t index_head_handler(httpd_req_t *req) {
+  if (!authorize_request(req)) {
+    return ESP_FAIL;
+  }
   httpd_resp_set_type(req, "text/html");
   httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
   httpd_resp_set_hdr(req, "X-Device-Type", "gel-camera");
@@ -853,9 +1179,12 @@ void startCameraServer() {
   // Initialize MAC address buffer
   String mac = WiFi.macAddress();
   strlcpy(device_mac, mac.c_str(), sizeof(device_mac));
+  strlcpy(auth_controller_id, AUTH_DEFAULT_CONTROLLER_ID, sizeof(auth_controller_id));
+  strlcpy(auth_shared_secret, AUTH_DEFAULT_SHARED_SECRET, sizeof(auth_shared_secret));
+  clear_nonce_cache();
 
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-  config.max_uri_handlers = 16;
+  config.max_uri_handlers = 20;
 
   httpd_uri_t index_uri = {
     .uri = "/",
@@ -1023,6 +1352,21 @@ void startCameraServer() {
     .handler=props_set_handler,
     .user_ctx=NULL };
 
+  httpd_uri_t pair_status_uri = {
+    .uri="/pair/status", .method=HTTP_GET,
+    .handler=pair_status_handler,
+    .user_ctx=NULL };
+
+  httpd_uri_t pair_open_uri = {
+    .uri="/pair/open", .method=HTTP_POST,
+    .handler=pair_open_handler,
+    .user_ctx=NULL };
+
+  httpd_uri_t pair_claim_uri = {
+    .uri="/pair/claim", .method=HTTP_POST,
+    .handler=pair_claim_handler,
+    .user_ctx=NULL };
+
 
 
   ra_filter_init(&ra_filter, 20);
@@ -1044,6 +1388,9 @@ void startCameraServer() {
 
     httpd_register_uri_handler(camera_httpd, &props_get_uri);
     httpd_register_uri_handler(camera_httpd, &props_set_uri);
+    httpd_register_uri_handler(camera_httpd, &pair_status_uri);
+    httpd_register_uri_handler(camera_httpd, &pair_open_uri);
+    httpd_register_uri_handler(camera_httpd, &pair_claim_uri);
 
   }
 
