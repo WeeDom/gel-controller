@@ -2,6 +2,9 @@ import asyncio
 import subprocess
 import socket
 import time
+import os
+import ipaddress
+from contextlib import contextmanager
 from aioesphomeapi.client import APIClient
 
 ESPRESSIF_OUIS = {
@@ -11,7 +14,6 @@ ESPRESSIF_OUIS = {
     "30:ae:a4",
 }
 
-SUBNET = "10.42.0.0/24"  # Your WiFi hotspot network
 ESPHOME_PORT = 6053
 
 # Known presence sensor devices (always check these first)
@@ -22,9 +24,11 @@ KNOWN_SENSORS = [
 
 def scan_subnet():
     """Fast scan for live IPs on local subnet"""
-    print(f"Scanning {SUBNET}...")
+    require_root()
+    subnet = detect_local_subnet_24()
+    print(f"Scanning {subnet}...")
     result = subprocess.run(
-        ["sudo", "nmap", "-sn", "-T5", "--min-rate", "1000", SUBNET],
+        ["nmap", "-sn", "-T5", "--min-rate", "1000", subnet],
         capture_output=True,
         text=True,
         check=True,
@@ -42,6 +46,70 @@ def scan_subnet():
             current_ip = None
 
     return devices
+
+
+def require_root() -> None:
+    """Require root privileges for network discovery scans."""
+    if os.geteuid() != 0:
+        raise PermissionError("Presence sensor discovery must run as root (required for nmap host discovery).")
+
+
+def detect_local_subnet_24() -> str:
+    """Detect active local interface subnet and return /24 network to scan."""
+    try:
+        route = subprocess.run(
+            ["ip", "route", "get", "1.1.1.1"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        ).stdout.strip()
+
+        parts = route.split()
+        if "src" in parts:
+            src_ip = parts[parts.index("src") + 1]
+        else:
+            src_ip = socket.gethostbyname(socket.gethostname())
+
+        ip = ipaddress.ip_address(src_ip)
+        if ip.version == 4:
+            return str(ipaddress.ip_network(f"{src_ip}/24", strict=False))
+    except Exception:
+        pass
+
+    return "10.42.0.0/24"
+
+
+@contextmanager
+def reduced_privileges_when_possible():
+    """Temporarily drop euid/egid to invoking user when running under sudo."""
+    if os.geteuid() != 0:
+        yield
+        return
+
+    sudo_uid = os.environ.get("SUDO_UID")
+    sudo_gid = os.environ.get("SUDO_GID")
+    if not sudo_uid or not sudo_gid:
+        yield
+        return
+
+    original_euid = os.geteuid()
+    original_egid = os.getegid()
+    dropped = False
+
+    try:
+        os.setegid(int(sudo_gid))
+        os.seteuid(int(sudo_uid))
+        dropped = True
+    except OSError:
+        dropped = False
+
+    try:
+        yield
+    finally:
+        if dropped:
+            os.seteuid(original_euid)
+            os.setegid(original_egid)
 
 
 def is_espressif(mac):
@@ -101,59 +169,62 @@ def discover_presence_sensors():
     sensors = []
     seen_ips = set()
 
-    # First, check known devices
-    print("=== Checking known devices ===")
-    for device in KNOWN_SENSORS:
-        host = device["host"]
-        port = device["port"]
-        name = device["name"]
+    scanned_devices = scan_subnet()
 
-        print(f"Checking {name} @ {host}:{port}...")
+    with reduced_privileges_when_possible():
+        # First, check known devices
+        print("=== Checking known devices ===")
+        for device in KNOWN_SENSORS:
+            host = device["host"]
+            port = device["port"]
+            name = device["name"]
 
-        if asyncio.run(is_presence_sensor(host, port)):
-            print(f"  ✓ Presence sensor confirmed!")
-            sensors.append({
-                "name": name,
-                "ip": host,
-                "port": port,
-                "status": "idle",
-                "last_seen": time.time()
-            })
-            seen_ips.add(host)
-        else:
-            print(f"  Could not connect or verify sensor.")
+            print(f"Checking {name} @ {host}:{port}...")
 
-    # Then scan local network for new devices
-    print("\n=== Scanning local network ===")
-    for ip, mac in scan_subnet():
-        if ip in seen_ips:
-            continue
+            if asyncio.run(is_presence_sensor(host, port)):
+                print(f"  ✓ Presence sensor confirmed!")
+                sensors.append({
+                    "name": name,
+                    "ip": host,
+                    "port": port,
+                    "status": "idle",
+                    "last_seen": time.time()
+                })
+                seen_ips.add(host)
+            else:
+                print(f"  Could not connect or verify sensor.")
 
-        print(f"Found device IP={ip} MAC={mac}")
+        # Then scan local network for new devices
+        print("\n=== Scanning local network ===")
+        for ip, mac in scanned_devices:
+            if ip in seen_ips:
+                continue
 
-        if not is_espressif(mac):
-            print("  Not an Espressif device, skipping.")
-            continue
+            print(f"Found device IP={ip} MAC={mac}")
 
-        if not port_open(ip, ESPHOME_PORT):
-            print(f"  Port {ESPHOME_PORT} not open, skipping.")
-            continue
+            if not is_espressif(mac):
+                print("  Not an Espressif device, skipping.")
+                continue
 
-        print("  Espressif device with ESPHome API, checking if presence sensor...")
+            if not port_open(ip, ESPHOME_PORT):
+                print(f"  Port {ESPHOME_PORT} not open, skipping.")
+                continue
 
-        if asyncio.run(is_presence_sensor(ip, ESPHOME_PORT)):
-            print(f"  ✓ New presence sensor discovered!")
-            sensors.append({
-                "name": f"sensor-{mac.replace(':', '')}",
-                "ip": ip,
-                "port": ESPHOME_PORT,
-                "mac": mac,
-                "status": "idle",
-                "last_seen": time.time()
-            })
-            seen_ips.add(ip)
-        else:
-            print("  Not a presence sensor, skipping.")
+            print("  Espressif device with ESPHome API, checking if presence sensor...")
+
+            if asyncio.run(is_presence_sensor(ip, ESPHOME_PORT)):
+                print(f"  ✓ New presence sensor discovered!")
+                sensors.append({
+                    "name": f"sensor-{mac.replace(':', '')}",
+                    "ip": ip,
+                    "port": ESPHOME_PORT,
+                    "mac": mac,
+                    "status": "idle",
+                    "last_seen": time.time()
+                })
+                seen_ips.add(ip)
+            else:
+                print("  Not a presence sensor, skipping.")
     return sensors
 
 
