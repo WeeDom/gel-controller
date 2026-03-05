@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 from pathlib import Path
 from .camera_state import CameraState, CameraStatus
+from .camera_auth import signed_url_and_headers
 
 if TYPE_CHECKING:
     from .room import Room
@@ -188,30 +189,37 @@ class Camera:
         capture_dir.mkdir(exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        control_url = f"http://{self.ip}/control"
-        capture_url = f"http://{self.ip}/capture"
+        base_url = f"http://{self.ip}"
 
         try:
+            control_url, control_headers = signed_url_and_headers(
+                base_url=base_url,
+                path="/control",
+                method="GET",
+                params={"var": "framesize", "val": 15},
+                extra_headers={'User-Agent': 'GEL-Controller/1.0'},
+            )
             control_response = requests.get(
                 control_url,
-                params={"var": "framesize", "val": 15},
                 timeout=5,
-                headers={
-                    'User-Agent': 'GEL-Controller/1.0'
-                }
+                headers=control_headers,
             )
             if control_response.status_code != 200:
                 logger.warning(
                     f"Failed to set framesize on {self._name}: HTTP {control_response.status_code}; continuing with capture"
                 )
 
+            capture_url, capture_headers = signed_url_and_headers(
+                base_url=base_url,
+                path="/capture",
+                method="GET",
+                extra_headers={'User-Agent': 'GEL-Controller/1.0'},
+            )
             logger.info(f"Capturing from {self._name} at {capture_url}")
             response = requests.get(
                 capture_url,
                 timeout=10,
-                headers={
-                    'User-Agent': 'GEL-Controller/1.0'
-                }
+                headers=capture_headers,
             )
 
             if response.status_code == 200:

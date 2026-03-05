@@ -5,10 +5,12 @@ import json
 import subprocess
 import sys
 import time
+import socket
 import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 from pathlib import Path
+from gel_controller.camera_auth import signed_url_and_headers
 
 
 def is_ip_address(value: str) -> bool:
@@ -76,10 +78,43 @@ def run_command_with_retries(cmd: list[str], retries: int, delay_seconds: float)
             time.sleep(delay_seconds)
 
 
+def wait_for_http_ready(device_ip: str, retries: int, delay_seconds: float, timeout: float) -> None:
+    attempts = max(1, retries)
+    status_url = f"http://{device_ip}/pair/status"
+
+    for attempt in range(1, attempts + 1):
+        try:
+            req = urllib.request.Request(status_url, method="GET")
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                if response.status == 200:
+                    return
+        except urllib.error.URLError as exc:
+            reason = exc.reason
+            if isinstance(reason, ConnectionRefusedError):
+                pass
+            elif isinstance(reason, socket.timeout):
+                pass
+            elif attempt >= attempts:
+                raise RuntimeError(f"Camera HTTP not ready at {status_url}: {exc}") from exc
+        except Exception as exc:
+            if attempt >= attempts:
+                raise RuntimeError(f"Camera HTTP not ready at {status_url}: {exc}") from exc
+
+        if attempt < attempts:
+            time.sleep(delay_seconds)
+
+    raise RuntimeError(f"Camera HTTP not ready at {status_url} after {attempts} attempts")
+
+
 def read_props(device_ip: str, timeout: float) -> dict:
-    url = f"http://{device_ip}/props"
+    url, headers = signed_url_and_headers(
+        base_url=f"http://{device_ip}",
+        path="/props",
+        method="GET",
+    )
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as response:
             body = response.read().decode("utf-8")
             data = json.loads(body)
             if isinstance(data, dict):
@@ -99,10 +134,17 @@ def post_props(device_ip: str, name: str, room_id: str, location: str, poll_inte
         % (safe_name, safe_room_id, safe_location, poll_interval)
     )
 
+    url, headers = signed_url_and_headers(
+        base_url=f"http://{device_ip}",
+        path="/props",
+        method="POST",
+        extra_headers={"Content-Type": "application/json"},
+    )
+
     req = urllib.request.Request(
-        f"http://{device_ip}/props",
+        url,
         data=payload.encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
@@ -149,6 +191,8 @@ def main() -> int:
     parser.add_argument("--location", help="Location to set in /props")
     parser.add_argument("--poll-interval", type=float, help="Poll interval to set in /props")
     parser.add_argument("--http-timeout", type=float, default=5.0, help="HTTP timeout in seconds")
+    parser.add_argument("--http-retries", type=int, default=12, help="HTTP readiness/config retry attempts")
+    parser.add_argument("--http-retry-delay", type=float, default=2.0, help="Seconds between HTTP retries")
 
     args = parser.parse_args()
 
@@ -213,6 +257,14 @@ def main() -> int:
         if not device_ip:
             print("Skipping /props config: no --device-ip provided and --port is not an IP")
             return 0
+
+        print(f"Waiting for camera HTTP to become ready at {device_ip}...")
+        wait_for_http_ready(
+            device_ip=device_ip,
+            retries=args.http_retries,
+            delay_seconds=args.http_retry_delay,
+            timeout=args.http_timeout,
+        )
 
         current = read_props(device_ip, args.http_timeout)
         name = args.camera_name if args.camera_name is not None else str(current.get("name", "cam1"))

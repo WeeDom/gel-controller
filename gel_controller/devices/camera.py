@@ -4,6 +4,7 @@ import socket
 import os
 import ipaddress
 from contextlib import contextmanager
+from gel_controller.camera_auth import signed_url_and_headers
 
 HTTP_PORTS = [80, 8080]  # Common ESP32-CAM ports
 TIMEOUT = 1.0
@@ -108,7 +109,12 @@ def port_open(ip, port, timeout=TIMEOUT):
 def is_gel_camera(ip, port):
     """Check if device is a gel-camera by looking for custom header"""
     try:
-        response = requests.head(f"http://{ip}:{port}/", timeout=TIMEOUT)
+        url, headers = signed_url_and_headers(
+            base_url=f"http://{ip}:{port}",
+            path="/",
+            method="HEAD",
+        )
+        response = requests.head(url, timeout=TIMEOUT, headers=headers)
         print(f"    Response headers: {response.headers}")
         # Check for our custom identification header
         device_type = response.headers.get('X-Device-Type', '')

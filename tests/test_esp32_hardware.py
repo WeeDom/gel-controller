@@ -15,6 +15,25 @@ import time
 import requests
 import os
 from pathlib import Path
+from gel_controller.camera_auth import signed_url_and_headers
+
+
+def camera_get(base_url: str, path: str, timeout: float | None = None):
+    url, headers = signed_url_and_headers(base_url=base_url, path=path, method="GET")
+    kwargs = {"headers": headers}
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    return requests.get(url, **kwargs)
+
+
+def camera_post(base_url: str, path: str, json_body: dict):
+    url, headers = signed_url_and_headers(
+        base_url=base_url,
+        path=path,
+        method="POST",
+        extra_headers={"Content-Type": "application/json"},
+    )
+    return requests.post(url, json=json_body, headers=headers)
 
 
 @pytest.fixture(scope="module")
@@ -82,7 +101,7 @@ def esp32_device():
 
     for attempt in range(max_retries):
         try:
-            response = requests.get(f"{base_url}/props", timeout=3)
+            response = camera_get(base_url, "/props", timeout=3)
             response.raise_for_status()
             print(f"✓ Device ready at {base_url}")
             print(f"{'='*60}\n")
@@ -105,7 +124,7 @@ class TestCameraPropsGet:
 
     def test_get_props_returns_json(self, esp32_device):
         """Should return camera properties as JSON."""
-        response = requests.get(f"{esp32_device}/props")
+        response = camera_get(esp32_device, "/props")
 
         assert response.status_code == 200
         assert "application/json" in response.headers.get("Content-Type", "")
@@ -117,7 +136,7 @@ class TestCameraPropsGet:
 
     def test_get_props_has_cors_header(self, esp32_device):
         """Should include CORS headers."""
-        response = requests.get(f"{esp32_device}/props")
+        response = camera_get(esp32_device, "/props")
 
         assert response.headers.get("Access-Control-Allow-Origin") == "*"
 
@@ -133,17 +152,13 @@ class TestCameraPropsSet:
             "poll_interval": 5.5
         }
 
-        response = requests.post(
-            f"{esp32_device}/props",
-            json=new_props,
-            headers={"Content-Type": "application/json"}
-        )
+        response = camera_post(esp32_device, "/props", new_props)
 
         assert response.status_code == 200
         assert response.text == "ok"
 
         # Verify properties were updated
-        get_response = requests.get(f"{esp32_device}/props")
+        get_response = camera_get(esp32_device, "/props")
         data = get_response.json()
 
         assert data["name"] == "test_camera"
@@ -152,22 +167,16 @@ class TestCameraPropsSet:
 
     def test_set_props_with_float_interval(self, esp32_device):
         """Should accept float values for poll_interval."""
-        response = requests.post(
-            f"{esp32_device}/props",
-            json={"name": "cam", "room_id": "room", "poll_interval": 15.7}
-        )
+        response = camera_post(esp32_device, "/props", {"name": "cam", "room_id": "room", "poll_interval": 15.7})
 
         assert response.status_code == 200
 
-        data = requests.get(f"{esp32_device}/props").json()
+        data = camera_get(esp32_device, "/props").json()
         assert data["poll_interval"] == 15.7
 
     def test_set_props_has_cors_header(self, esp32_device):
         """POST should include CORS headers."""
-        response = requests.post(
-            f"{esp32_device}/props",
-            json={"name": "cam", "room_id": "room", "poll_interval": 10.0}
-        )
+        response = camera_post(esp32_device, "/props", {"name": "cam", "room_id": "room", "poll_interval": 10.0})
 
         assert response.headers.get("Access-Control-Allow-Origin") == "*"
 
@@ -184,10 +193,10 @@ class TestCameraPropsIntegration:
         }
 
         # Set properties
-        requests.post(f"{esp32_device}/props", json=original)
+        camera_post(esp32_device, "/props", original)
 
         # Get properties
-        response = requests.get(f"{esp32_device}/props")
+        response = camera_get(esp32_device, "/props")
         data = response.json()
 
         assert data["name"] == original["name"]
@@ -199,12 +208,9 @@ class TestCameraPropsIntegration:
         """Should truncate strings longer than 31 characters."""
         long_name = "a" * 50  # 50 characters
 
-        requests.post(
-            f"{esp32_device}/props",
-            json={"name": long_name, "room_id": "room", "poll_interval": 10.0}
-        )
+        camera_post(esp32_device, "/props", {"name": long_name, "room_id": "room", "poll_interval": 10.0})
 
-        data = requests.get(f"{esp32_device}/props").json()
+        data = camera_get(esp32_device, "/props").json()
 
         # Should be truncated to 31 chars
         assert len(data["name"]) <= 31

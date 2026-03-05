@@ -138,6 +138,37 @@ wifi_ssid: "YourWiFiSSID"
 wifi_password: "YourWiFiPassword"
 ```
 
+Camera endpoint auth (Phase 1) uses shared-secret request signing.
+Set these in `.env` (auto-loaded) or export in your shell before running controller/deploy scripts:
+
+```bash
+export GEL_CONTROLLER_ID="gel-controller-1"
+export GEL_CAMERA_AUTH_SECRET="change-me-camera-auth-secret"
+```
+
+These values must match the firmware constants in `esp32cam/CameraWebServer/app_httpd.cpp`.
+
+### Pair / re-pair a camera (Phase 2)
+
+After flashing, you can open a pairing window and claim controller credentials:
+
+```bash
+source venv/bin/activate
+python3 pair_esp32_camera.py --device-ip 10.42.0.187
+```
+
+This performs:
+1. `GET /pair/status`
+2. `POST /pair/open` (signed with current credentials)
+3. `POST /pair/claim` (sets controller id + shared secret)
+4. Signed `GET /props` verification
+
+Useful flags:
+- `--status-only` show pairing state only
+- `--open-only` only open pairing window
+- `--new-controller-id ...` claim a different controller id
+- `--new-secret ...` rotate to a new shared secret
+
 ## How It Works
 
 1. **Device Discovery**: Uses `avahi-browse` to find ESPHome devices on the local network
