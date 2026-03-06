@@ -1,0 +1,18 @@
+[Unit]
+Description=GEL Controller reverse SSH tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gel
+Group=gel
+EnvironmentFile=-/etc/gel-controller/tunnel.env
+ExecStart=/opt/gel-controller/bin/gel-reverse-tunnel.sh
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
