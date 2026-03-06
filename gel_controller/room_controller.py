@@ -7,6 +7,7 @@ import threading
 import json
 import sqlite3
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -255,6 +256,85 @@ class RoomController:
             "queued_files": queued_files,
         }
 
+    def get_status(self, include_logs: bool = True, log_lines: int = 80) -> Dict[str, object]:
+        """Return current controller state suitable for remote admin UI."""
+        rooms_payload: List[Dict[str, object]] = []
+
+        for room in self._rooms:
+            cameras_payload: List[Dict[str, object]] = []
+            for camera in room.get_cameras(search_network=False):
+                cameras_payload.append(
+                    {
+                        "name": camera.name,
+                        "ip": camera.ip,
+                        "status": camera.status_value,
+                        "captures": camera.capture_count,
+                    }
+                )
+
+            detectors_payload: List[Dict[str, object]] = []
+            now = time.time()
+            for detector in room.get_person_detectors(search_network=False):
+                last_heartbeat = getattr(detector, "_last_heartbeat_time", None)
+                age_seconds = None
+                if isinstance(last_heartbeat, (int, float)):
+                    age_seconds = round(max(0.0, now - float(last_heartbeat)), 1)
+
+                detectors_payload.append(
+                    {
+                        "name": detector.name,
+                        "host": detector.host,
+                        "port": detector.port,
+                        "heartbeat_age_seconds": age_seconds,
+                    }
+                )
+
+            rooms_payload.append(
+                {
+                    "room_id": room.room_id,
+                    "name": room.name,
+                    "state": room.state,
+                    "cameras": cameras_payload,
+                    "detectors": detectors_payload,
+                }
+            )
+
+        payload: Dict[str, object] = {
+            "ok": True,
+            "running": self._running,
+            "control_api": f"http://{self._control_host}:{self._control_port}",
+            "rooms": rooms_payload,
+            "thread_count": len(self._threads),
+            "spot_diff_enabled": self._spot_diff_enabled,
+            "timestamp": datetime.now().isoformat(),
+        }
+
+        if include_logs:
+            payload["recent_log_lines"] = self._tail_latest_log(lines=log_lines)
+
+        return payload
+
+    def _tail_latest_log(self, lines: int = 80) -> List[str]:
+        """Return trailing lines from the newest gel log file."""
+        log_dir = Path("logs")
+        if not log_dir.exists():
+            return []
+
+        candidates = sorted(log_dir.glob("gel-*.log"), key=lambda p: p.stat().st_mtime)
+        if not candidates:
+            return []
+
+        latest = candidates[-1]
+        try:
+            content = latest.read_text(encoding="utf-8", errors="replace").splitlines()
+        except Exception as e:
+            logger.debug("Could not read log file %s: %s", latest, e)
+            return []
+
+        if lines <= 0:
+            return []
+        return content[-lines:]
+
     def _analyze_changeset(self, room: 'Room', changeset_path: Path) -> None:
         """Run spot-the-diff against baselines for one changeset image."""
         try:
@@ -289,6 +369,24 @@ class RoomController:
         controller = self
 
         class _ControlHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                request_path = self.path.split("?", 1)[0]
+                if request_path not in {"/status", "/health"}:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+
+                if request_path == "/health":
+                    result = {"ok": True, "running": controller.is_running()}
+                else:
+                    result = controller.get_status(include_logs=True)
+
+                status = 200 if result.get("ok") else 500
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(result).encode("utf-8"))
+
             def do_POST(self):
                 request_path = self.path.split("?", 1)[0]
                 if request_path not in {"/capture-baseline", "/analyze-latest"}:
