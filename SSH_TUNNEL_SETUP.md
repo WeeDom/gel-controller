@@ -90,3 +90,55 @@ GEL_CONTROLLER_ENDPOINTS={"gel-controller-1":"http://127.0.0.1:20001"}
 ```
 
 If Flask is on another host, point to bastion private IP instead of `127.0.0.1`.
+
+## Dockerized Flask On Bastion (Connection Refused Fix)
+
+When Flask runs in a Docker container on the same bastion host, reverse tunnel ports bound to `127.0.0.1` are not reachable from the container.
+
+- Host check works:
+
+```bash
+curl -sS http://127.0.0.1:20001/status
+```
+
+- Container check fails (before fix):
+
+```bash
+docker compose exec web curl -sS http://host.docker.internal:20001/status
+```
+
+Create a bridge service on the host:
+
+```bash
+sudo tee /etc/systemd/system/gel-controller-bridge-20001.service >/dev/null <<'EOF'
+[Unit]
+Description=Bridge Docker traffic to GEL controller tunnel 20001
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/socat TCP-LISTEN:20001,bind=172.17.0.1,reuseaddr,fork TCP:127.0.0.1:20001
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now gel-controller-bridge-20001.service
+sudo systemctl status gel-controller-bridge-20001.service --no-pager
+```
+
+For Dockerized Flask, set endpoint mapping to host gateway:
+
+```dotenv
+GEL_CONTROLLER_ENDPOINTS={"gel-controller-1":"http://host.docker.internal:20001"}
+```
+
+Verify from container:
+
+```bash
+docker compose exec web curl -sS http://host.docker.internal:20001/status
+```
