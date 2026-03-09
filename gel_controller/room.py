@@ -267,11 +267,11 @@ class Room:
             for pd in pds:
                 detector = PersonDetector(
                     name=pd["name"],
-                host=pd["ip"],
-                port=pd["port"],
-                room=self  # Pass room reference so detector can update room state
-            )
-            self.add_person_detector(detector) # type: ignore
+                    host=pd.get("host", pd["ip"]),
+                    port=pd["port"],
+                    room=self  # Pass room reference so detector can update room state
+                )
+                self.add_person_detector(detector) # type: ignore
         return self._person_detectors.copy()
 
     def add_person_detector(self, detector: 'PersonDetector') -> None:

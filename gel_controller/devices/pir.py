@@ -175,22 +175,32 @@ def discover_presence_sensors():
         # First, check known devices
         print("=== Checking known devices ===")
         for device in KNOWN_SENSORS:
-            host = device["host"]
+            configured_host = device["host"]
             port = device["port"]
             name = device["name"]
+            # Prefer stable mDNS name so reconnect survives DHCP IP changes.
+            probe_hosts = [name]
+            if configured_host not in probe_hosts:
+                probe_hosts.append(configured_host)
+            host = None
 
-            print(f"Checking {name} @ {host}:{port}...")
+            print(f"Checking {name} (candidates: {', '.join(probe_hosts)}) @ {port}...")
+            for candidate in probe_hosts:
+                if asyncio.run(is_presence_sensor(candidate, port)):
+                    host = candidate
+                    break
 
-            if asyncio.run(is_presence_sensor(host, port)):
+            if host is not None:
                 print(f"  ✓ Presence sensor confirmed!")
                 sensors.append({
                     "name": name,
-                    "ip": host,
+                    "host": name,
+                    "ip": configured_host,
                     "port": port,
                     "status": "idle",
                     "last_seen": time.time()
                 })
-                seen_ips.add(host)
+                seen_ips.add(configured_host)
             else:
                 print(f"  Could not connect or verify sensor.")
 
@@ -216,6 +226,7 @@ def discover_presence_sensors():
                 print(f"  ✓ New presence sensor discovered!")
                 sensors.append({
                     "name": f"sensor-{mac.replace(':', '')}",
+                    "host": ip,
                     "ip": ip,
                     "port": ESPHOME_PORT,
                     "mac": mac,
