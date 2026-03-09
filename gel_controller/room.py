@@ -131,7 +131,7 @@ class Room:
                 self._cancel_empty_timer()
 
     def _start_empty_timer(self) -> None:
-        """Start 3-minute timer when room becomes empty."""
+        """Start empty-room capture timer when room becomes empty."""
         self._cancel_empty_timer()  # Cancel any existing timer
 
         logger.info(f"🕐 Room {self._name}: Starting {self._capture_delay/60:.1f}-minute capture timer")
@@ -149,7 +149,7 @@ class Room:
             logger.info(f"⏹️  Room {self._name}: Cancelled capture timer (room occupied again)")
 
     def _trigger_capture(self) -> None:
-        """Trigger all cameras to capture images after 3 minutes of empty room."""
+        """Trigger all cameras to capture images after the configured empty delay."""
         self._empty_timer = None
 
         if self._state != "empty":
@@ -161,7 +161,9 @@ class Room:
             return
 
         self._capture_done_for_empty_cycle = True
-        logger.info(f"Room {self._name}: 3 minutes elapsed, triggering camera captures")
+        logger.info(
+            f"Room {self._name}: {self._capture_delay/60:.1f} minutes elapsed, triggering camera captures"
+        )
         captured_files: List[Path] = []
         for camera in self._cameras:
             try:

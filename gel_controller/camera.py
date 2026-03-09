@@ -5,6 +5,7 @@ Camera - Represents a camera device that monitors a room.
 import logging
 import time
 from datetime import datetime
+from http.client import IncompleteRead
 from typing import Optional, TYPE_CHECKING
 from pathlib import Path
 from .camera_state import CameraState, CameraStatus
@@ -76,6 +77,7 @@ class Camera:
         self.url = url
         self.stream_url = stream_url
         self._port = port
+        self._supports_control = True
 
     # Name property
     @property
@@ -191,23 +193,32 @@ class Camera:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         base_url = f"http://{self.ip}"
 
+        max_capture_attempts = 3
+        retry_delay_seconds = 0.75
+
         try:
-            control_url, control_headers = signed_url_and_headers(
-                base_url=base_url,
-                path="/control",
-                method="GET",
-                params={"var": "framesize", "val": 15},
-                extra_headers={'User-Agent': 'GEL-Controller/1.0'},
-            )
-            control_response = requests.get(
-                control_url,
-                timeout=5,
-                headers=control_headers,
-            )
-            if control_response.status_code != 200:
-                logger.warning(
-                    f"Failed to set framesize on {self._name}: HTTP {control_response.status_code}; continuing with capture"
+            if self._supports_control:
+                control_url, control_headers = signed_url_and_headers(
+                    base_url=base_url,
+                    path="/control",
+                    method="GET",
+                    params={"var": "framesize", "val": 15},
+                    extra_headers={'User-Agent': 'GEL-Controller/1.0'},
                 )
+                control_response = requests.get(
+                    control_url,
+                    timeout=(3, 5),
+                    headers=control_headers,
+                )
+                if control_response.status_code == 401:
+                    self._supports_control = False
+                    logger.warning(
+                        f"Failed to set framesize on {self._name}: HTTP 401; disabling control calls and continuing with capture"
+                    )
+                elif control_response.status_code != 200:
+                    logger.warning(
+                        f"Failed to set framesize on {self._name}: HTTP {control_response.status_code}; continuing with capture"
+                    )
 
             capture_url, capture_headers = signed_url_and_headers(
                 base_url=base_url,
@@ -216,21 +227,47 @@ class Camera:
                 extra_headers={'User-Agent': 'GEL-Controller/1.0'},
             )
             logger.info(f"Capturing from {self._name} at {capture_url}")
-            response = requests.get(
-                capture_url,
-                timeout=10,
-                headers=capture_headers,
-            )
+            for attempt in range(1, max_capture_attempts + 1):
+                try:
+                    response = requests.get(
+                        capture_url,
+                        timeout=(5, 25),
+                        headers=capture_headers,
+                    )
 
-            if response.status_code == 200:
-                filename = capture_dir / f"{tag}-{room.room_id}-{self._name}-{timestamp}.jpeg"
-                filename.write_bytes(response.content)
-                logger.info(f"✓ Saved capture to {filename}")
-                self.capture_count += 1
-                return filename
-            else:
-                logger.error(f"Failed to capture from {self._name}: HTTP {response.status_code}")
-                return None
+                    if response.status_code == 200:
+                        filename = capture_dir / f"{tag}-{room.room_id}-{self._name}-{timestamp}.jpeg"
+                        filename.write_bytes(response.content)
+                        logger.info(f"✓ Saved capture to {filename}")
+                        self.capture_count += 1
+                        return filename
+
+                    logger.error(f"Failed to capture from {self._name}: HTTP {response.status_code}")
+                    return None
+
+                except (requests.exceptions.ChunkedEncodingError, IncompleteRead) as e:
+                    if attempt >= max_capture_attempts:
+                        logger.error(
+                            f"Error capturing from {self._name}: incomplete response after {attempt} attempts: {e}"
+                        )
+                        return None
+
+                    logger.warning(
+                        f"Capture read truncated for {self._name} (attempt {attempt}/{max_capture_attempts}), retrying"
+                    )
+                    time.sleep(retry_delay_seconds)
+
+                except requests.exceptions.RequestException as e:
+                    if attempt >= max_capture_attempts:
+                        logger.error(f"Error capturing from {self._name}: {e}")
+                        return None
+
+                    logger.warning(
+                        f"Capture request failed for {self._name} (attempt {attempt}/{max_capture_attempts}): {e}; retrying"
+                    )
+                    time.sleep(retry_delay_seconds)
+
+            return None
         except Exception as e:
             logger.error(f"Error capturing from {self._name}: {e}")
             return None
