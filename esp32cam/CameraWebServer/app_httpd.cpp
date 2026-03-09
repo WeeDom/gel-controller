@@ -61,7 +61,8 @@ static char device_mac[18] = "";  // MAC address buffer
 
 // Shared-secret auth (Phase 1)
 // Configure these to match controller-side values.
-static const bool AUTH_ENABLED = true;
+// static const bool AUTH_ENABLED = true;
+static const bool AUTH_ENABLED = false;  // Temporary: disable access restriction
 static const char *AUTH_DEFAULT_CONTROLLER_ID = "gel-controller-1";
 static const char *AUTH_DEFAULT_SHARED_SECRET = "niapcinimod";
 static const long AUTH_MAX_SKEW_SECONDS = 45;
@@ -210,6 +211,9 @@ static esp_err_t send_auth_error(httpd_req_t *req, const char *message, const ch
 }
 
 static bool authorize_request(httpd_req_t *req) {
+  (void)req;
+  return true;  // Temporary: allow all requests without auth headers/signature
+
   if (!AUTH_ENABLED) {
     return true;
   }
