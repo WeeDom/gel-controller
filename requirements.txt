@@ -116,6 +116,8 @@ esptool==5.1.0
     # via
     #   -r requirements.in
     #   esphome
+fastapi==0.115.12
+    # via -r requirements.in
 freetype-py==2.5.1
     # via
     #   -r requirements.in
@@ -182,7 +184,7 @@ noiseprotocol==0.3.1
     # via
     #   -r requirements.in
     #   aioesphomeapi
-openai==2.24.0
+openai==2.26.0
     # via -r requirements.in
 packaging==26.0
     # via
@@ -220,6 +222,7 @@ pycparser==3.0
 pydantic==2.12.5
     # via
     #   anthropic
+    #   fastapi
     #   openai
 pydantic-core==2.41.5
     # via pydantic
@@ -244,7 +247,7 @@ pyserial==3.5
     #   platformio
 pytest==9.0.2
     # via -r requirements.in
-python-dotenv==1.2.1
+python-dotenv==1.2.2
     # via dotenv
 pyyaml==6.0.3
     # via
@@ -290,6 +293,7 @@ sniffio==1.3.1
 starlette==0.46.2
     # via
     #   -r requirements.in
+    #   fastapi
     #   platformio
 tabulate==0.9.0
     # via
@@ -305,6 +309,7 @@ typing-extensions==4.15.0
     # via
     #   -r requirements.in
     #   anthropic
+    #   fastapi
     #   openai
     #   pydantic
     #   pydantic-core
