@@ -63,6 +63,9 @@ class RoomController:
         self._detector_probe_timeout = float(os.getenv("DETECTOR_PROBE_TIMEOUT", "2.0"))
         self._detector_reconnect_initial_delay = float(os.getenv("DETECTOR_RECONNECT_INITIAL_DELAY", "2.0"))
         self._detector_reconnect_max_delay = float(os.getenv("DETECTOR_RECONNECT_MAX_DELAY", "60.0"))
+        self._camera_discovery_interval = float(os.getenv("CAMERA_DISCOVERY_INTERVAL", "300"))  # seconds
+        self._running_camera_keys: set = set()  # MAC or IP of cameras with live threads
+        self._running_camera_keys_lock = threading.Lock()
         self._init_baseline_db()
 
     def get_rooms(self) -> List['Room']:
@@ -126,15 +129,7 @@ class RoomController:
         for room in self._rooms:
             # Start cameras
             for camera in room.get_cameras(search_network=False):
-                thread = threading.Thread(
-                    target=self._run_camera_loop,
-                    args=(camera, room),
-                    name=f"Camera-{camera.name}",
-                    daemon=True
-                )
-                thread.start()
-                self._threads.append(thread)
-                logger.debug(f"Started thread for camera: {camera.name}")
+                self._start_camera_thread(camera, room)
 
             # Start person detectors
             for detector in room.get_person_detectors(search_network=False):
@@ -147,6 +142,15 @@ class RoomController:
                 thread.start()
                 self._threads.append(thread)
                 logger.debug(f"Started thread for detector: {detector.name}")
+
+        # Periodic camera rediscovery
+        discovery_thread = threading.Thread(
+            target=self._run_discovery_loop,
+            name="CameraDiscovery",
+            daemon=True,
+        )
+        discovery_thread.start()
+        self._threads.append(discovery_thread)
 
         logger.info(f"Started {len(self._threads)} thread(s)")
 
@@ -551,6 +555,50 @@ class RoomController:
         self._control_server = None
         logger.info("Control API stopped")
 
+    def _camera_key(self, camera: 'Camera') -> str:
+        """Stable identifier for a camera: prefer MAC, fall back to IP."""
+        return camera.mac if camera.mac else (camera.ip or camera.name)
+
+    def _start_camera_thread(self, camera: 'Camera', room: 'Room') -> None:
+        """Start a monitoring thread for a camera if one isn't already running."""
+        key = self._camera_key(camera)
+        with self._running_camera_keys_lock:
+            if key in self._running_camera_keys:
+                return
+            self._running_camera_keys.add(key)
+
+        thread = threading.Thread(
+            target=self._run_camera_loop,
+            args=(camera, room),
+            name=f"Camera-{camera.name}",
+            daemon=True,
+        )
+        thread.start()
+        self._threads.append(thread)
+        logger.info(f"Started thread for camera: {camera.name} (key={key})")
+
+    def _run_discovery_loop(self) -> None:
+        """Periodically rediscover cameras in all rooms and start threads for new ones."""
+        interval = self._camera_discovery_interval
+        logger.info(f"Camera discovery loop started (interval={interval:.0f}s)")
+        while self._running:
+            # Sleep first — initial discovery already done in start()
+            for _ in range(int(interval)):
+                if not self._running:
+                    return
+                time.sleep(1)
+
+            logger.info("Running periodic camera rediscovery…")
+            for room in self._rooms:
+                try:
+                    cameras = room.get_cameras(search_network=True)
+                except Exception as exc:
+                    logger.warning(f"Camera rediscovery failed for room {room.room_id}: {exc}")
+                    continue
+
+                for camera in cameras:
+                    self._start_camera_thread(camera, room)
+
     def _run_camera_loop(self, camera: 'Camera', room: 'Room') -> None:
         """
         Camera monitoring loop (runs in separate thread).
@@ -559,6 +607,7 @@ class RoomController:
             camera: Camera instance to monitor
             room: Room instance the camera belongs to
         """
+        key = self._camera_key(camera)
         try:
             while self._running:
                 # Camera checks room state and updates itself
@@ -573,6 +622,10 @@ class RoomController:
                 time.sleep(camera.poll_interval)
         except Exception as e:
             logger.error(f"Error in camera loop for {camera.name}: {e}")
+        finally:
+            with self._running_camera_keys_lock:
+                self._running_camera_keys.discard(key)
+            logger.info(f"Camera thread exited for {camera.name} (key={key})")
 
     def _run_detector_loop(self, detector: 'PersonDetector') -> None:
         """
