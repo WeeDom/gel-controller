@@ -4,15 +4,14 @@ RoomController - Orchestrates multiple rooms with cameras and person detectors.
 
 import asyncio
 import threading
-import json
 import sqlite3
 import os
 import time
 from datetime import datetime
 from pathlib import Path
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import List, Dict, TYPE_CHECKING, Optional
 import logging
+from .control_api import ControlAPIServer
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +36,7 @@ class RoomController:
         self._threads: List[threading.Thread] = []
         self._event_loop = None
         self._shutdown_event = asyncio.Event()
-        self._control_server: Optional[ThreadingHTTPServer] = None
-        self._control_thread: Optional[threading.Thread] = None
+        self._control_server: Optional[ControlAPIServer] = None
         self._control_host = "127.0.0.1"
         self._control_port = 8765
         self._baseline_db_path = Path("logs") / "baselines.db"
@@ -46,6 +44,7 @@ class RoomController:
         self._spot_diff_model = os.getenv("SPOT_THE_DIFF_MODEL", "claude-opus-4-5-20251101")
         self._spot_diff_logs_dir = Path("logs") / "spot_the_diff"
         self._detector_poll_interval = float(os.getenv("DETECTOR_POLL_INTERVAL", "1.0"))
+        self._detector_probe_timeout = float(os.getenv("DETECTOR_PROBE_TIMEOUT", "2.0"))
         self._detector_reconnect_initial_delay = float(os.getenv("DETECTOR_RECONNECT_INITIAL_DELAY", "2.0"))
         self._detector_reconnect_max_delay = float(os.getenv("DETECTOR_RECONNECT_MAX_DELAY", "60.0"))
         self._init_baseline_db()
@@ -362,87 +361,25 @@ class RoomController:
         logger.info(f"Spot-the-diff report saved to {report_path}")
 
     def _start_control_server(self) -> None:
-        """Start local HTTP control endpoint for runtime commands."""
+        """Start local FastAPI control endpoint for runtime commands."""
         if self._control_server is not None:
             return
 
-        controller = self
-
-        class _ControlHandler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                request_path = self.path.split("?", 1)[0]
-                if request_path not in {"/status", "/health"}:
-                    self.send_response(404)
-                    self.end_headers()
-                    return
-
-                if request_path == "/health":
-                    result = {"ok": True, "running": controller.is_running()}
-                else:
-                    result = controller.get_status(include_logs=True)
-
-                status = 200 if result.get("ok") else 500
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps(result).encode("utf-8"))
-
-            def do_POST(self):
-                request_path = self.path.split("?", 1)[0]
-                if request_path not in {"/capture-baseline", "/analyze-latest"}:
-                    self.send_response(404)
-                    self.end_headers()
-                    return
-
-                content_length = int(self.headers.get("Content-Length", "0"))
-                payload = {}
-                if content_length > 0:
-                    raw = self.rfile.read(content_length)
-                    try:
-                        payload = json.loads(raw.decode("utf-8"))
-                    except json.JSONDecodeError:
-                        self.send_response(400)
-                        self.send_header("Content-Type", "application/json")
-                        self.end_headers()
-                        self.wfile.write(json.dumps({"ok": False, "error": "Invalid JSON"}).encode("utf-8"))
-                        return
-
-                room_id = payload.get("room_id")
-                if request_path == "/capture-baseline":
-                    result = controller.capture_baseline(room_id=room_id)
-                else:
-                    result = controller.analyze_latest(room_id=room_id)
-
-                status = 200 if result.get("ok") else 404
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps(result).encode("utf-8"))
-
-            def log_message(self, format, *args):
-                logger.debug("Control API: " + format, *args)
-
-        self._control_server = ThreadingHTTPServer((self._control_host, self._control_port), _ControlHandler)
-        self._control_thread = threading.Thread(
-            target=self._control_server.serve_forever,
-            name="Controller-Control-API",
-            daemon=True,
+        self._control_server = ControlAPIServer(
+            controller=self,
+            host=self._control_host,
+            port=self._control_port,
         )
-        self._control_thread.start()
+        self._control_server.start()
         logger.info("Control API listening at http://%s:%s", self._control_host, self._control_port)
 
     def _stop_control_server(self) -> None:
-        """Stop local HTTP control endpoint."""
+        """Stop local FastAPI control endpoint."""
         if self._control_server is None:
             return
 
-        self._control_server.shutdown()
-        self._control_server.server_close()
-        if self._control_thread is not None:
-            self._control_thread.join(timeout=2.0)
-
+        self._control_server.stop(timeout_seconds=2.0)
         self._control_server = None
-        self._control_thread = None
         logger.info("Control API stopped")
 
     def _run_camera_loop(self, camera: 'Camera', room: 'Room') -> None:
@@ -505,8 +442,15 @@ class RoomController:
                 reconnect_delay = max(0.1, self._detector_reconnect_initial_delay)
 
                 while self._running:
-                    detector.check_heartbeat_timeout()
-                    await asyncio.sleep(self._detector_poll_interval)
+                    if detector.has_heartbeat_timed_out():
+                        sensor_alive = await detector.probe_sensor_alive(self._detector_probe_timeout)
+                        if sensor_alive:
+                            detector.check_heartbeat_timeout()
+                        else:
+                            raise ConnectionError("Detector liveness probe failed")
+                    disconnected = await detector.wait_for_disconnect(self._detector_poll_interval)
+                    if disconnected and self._running:
+                        raise ConnectionError("Detector connection dropped")
 
             except Exception as e:
                 if self._running:

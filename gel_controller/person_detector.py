@@ -4,6 +4,7 @@ PersonDetector - Monitors ESPHome device for heartbeat data to detect occupancy.
 
 import logging
 import time
+import asyncio
 from typing import Optional, TYPE_CHECKING
 from aioesphomeapi.client import APIClient
 
@@ -17,7 +18,8 @@ class PersonDetector:
     __slots__ = (
         "_ip", "_name", "_port", "_host", "_encryption_key",
         "_heartbeat_timeout", "_last_heartbeat_time",
-        "_api_client", "_heartbeat_sensor_key", "_room")
+        "_api_client", "_heartbeat_sensor_key", "_room",
+        "_disconnect_event")
 
     """
     Person detector using ESPHome device with heartbeat sensor.
@@ -54,6 +56,7 @@ class PersonDetector:
         self._last_heartbeat_time: Optional[float] = None
         self._api_client: Optional[APIClient] = None
         self._heartbeat_sensor_key: Optional[int] = None
+        self._disconnect_event: Optional[asyncio.Event] = None
 
     ## mutable
     @property
@@ -161,6 +164,8 @@ class PersonDetector:
         Establishes connection and retrieves device entities.
         """
         try:
+            self._heartbeat_sensor_key = None
+            self._disconnect_event = asyncio.Event()
             self._api_client = APIClient(
                 self._host,
                 self._port,
@@ -168,7 +173,7 @@ class PersonDetector:
                 noise_psk=self._encryption_key
             )
 
-            await self._api_client.connect(login=True)
+            await self._api_client.connect(on_stop=self._on_connection_stop, login=True)
             logger.info(f"Detector {self._name} connected to {self._host}:{self._port}")
 
             # Get device entities to find heartbeat sensor
@@ -189,6 +194,18 @@ class PersonDetector:
             logger.error(f"Failed to connect detector {self._name} to {self._host}: {e}")
             raise
 
+    async def _on_connection_stop(self, expected_disconnect: bool) -> None:
+        """Receive API client stop notifications and surface unexpected drops."""
+        if not expected_disconnect:
+            logger.warning(
+                "Detector %s connection lost for %s:%s; scheduling reconnect",
+                self._name,
+                self._host,
+                self._port,
+            )
+        if self._disconnect_event is not None:
+            self._disconnect_event.set()
+
     async def disconnect(self) -> None:
         """Disconnect from ESPHome device."""
         if self._api_client:
@@ -197,6 +214,59 @@ class PersonDetector:
                 logger.info(f"Detector {self._name} disconnected from {self._host}")
             except Exception as e:
                 logger.error(f"Error disconnecting detector {self._name}: {e}")
+            finally:
+                self._disconnect_event = None
+
+    async def wait_for_disconnect(self, timeout: float) -> bool:
+        """
+        Wait for API disconnect notification.
+
+        Returns True if disconnected, False if timeout elapsed with no disconnect.
+        """
+        if self._disconnect_event is None:
+            return False
+
+        try:
+            await asyncio.wait_for(self._disconnect_event.wait(), timeout=max(0.0, timeout))
+            return True
+        except asyncio.TimeoutError:
+            return False
+
+    def has_heartbeat_timed_out(self) -> bool:
+        """Return True when last heartbeat exceeds configured timeout."""
+        if self._last_heartbeat_time is None:
+            logger.debug("No heartbeat detected yet (last_heartbeat_time is None)")
+            return False
+
+        time_since_heartbeat = time.time() - self._last_heartbeat_time
+        logger.debug(
+            "Checking timeout: last heartbeat %.1fs ago (timeout=%ss)",
+            time_since_heartbeat,
+            self._heartbeat_timeout,
+        )
+        return time_since_heartbeat > self._heartbeat_timeout
+
+    async def probe_sensor_alive(self, timeout: float = 2.0) -> bool:
+        """
+        Actively probe the sensor via API.
+
+        Returns True when device responds to API query, otherwise False.
+        """
+        if self._api_client is None:
+            return False
+
+        try:
+            await asyncio.wait_for(self._api_client.device_info(), timeout=max(0.1, timeout))
+            return True
+        except Exception as e:
+            logger.warning(
+                "Detector %s liveness probe failed for %s:%s: %s",
+                self._name,
+                self._host,
+                self._port,
+                e,
+            )
+            return False
 
     async def subscribe_to_states(self) -> None:
         """
@@ -266,11 +336,9 @@ class PersonDetector:
 
         Should be called periodically to detect when heartbeat stops.
         """
-        if self._last_heartbeat_time is not None:
-            time_since_heartbeat = time.time() - self._last_heartbeat_time
-            logger.debug(f"Checking timeout: last heartbeat {time_since_heartbeat:.1f}s ago (timeout={self._heartbeat_timeout}s)")
-            if time_since_heartbeat > self._heartbeat_timeout:
-                logger.info(f"⏱️  Heartbeat timeout after {time_since_heartbeat:.1f}s → Setting room to EMPTY")
-                self.on_heartbeat_timeout()
-        else:
-            logger.debug(f"No heartbeat detected yet (last_heartbeat_time is None)")
+        if not self.has_heartbeat_timed_out():
+            return
+
+        time_since_heartbeat = time.time() - float(self._last_heartbeat_time)
+        logger.info(f"⏱️  Heartbeat timeout after {time_since_heartbeat:.1f}s → Setting room to EMPTY")
+        self.on_heartbeat_timeout()

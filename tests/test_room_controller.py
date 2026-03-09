@@ -288,12 +288,83 @@ class TestDetectorReconnect:
 
         detector.connect = AsyncMock(side_effect=connect_side_effect)
         detector.subscribe_to_states = AsyncMock()
+        detector.has_heartbeat_timed_out = Mock(side_effect=check_timeout_side_effect)
+        detector.probe_sensor_alive = AsyncMock(return_value=True)
         detector.check_heartbeat_timeout = Mock(side_effect=check_timeout_side_effect)
+        detector.wait_for_disconnect = AsyncMock(return_value=False)
         detector.disconnect = AsyncMock()
 
         await controller._async_detector_loop(detector)
 
         assert connect_calls["count"] >= 2
         detector.subscribe_to_states.assert_awaited_once()
-        detector.check_heartbeat_timeout.assert_called_once()
+        detector.has_heartbeat_timed_out.assert_called_once()
+        detector.wait_for_disconnect.assert_awaited_once()
         assert detector.disconnect.await_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_detector_loop_retries_after_disconnect_signal(self):
+        controller = RoomController()
+        controller._running = True
+        controller._detector_poll_interval = 0.01
+        controller._detector_reconnect_initial_delay = 0.01
+        controller._detector_reconnect_max_delay = 0.02
+
+        detector = Mock()
+        detector.name = "Detector 1"
+
+        disconnect_signals = {"count": 0}
+
+        async def wait_for_disconnect_side_effect(_timeout: float):
+            if disconnect_signals["count"] == 0:
+                disconnect_signals["count"] += 1
+                return True
+            controller._running = False
+            return False
+
+        detector.connect = AsyncMock()
+        detector.subscribe_to_states = AsyncMock()
+        detector.has_heartbeat_timed_out = Mock(return_value=False)
+        detector.probe_sensor_alive = AsyncMock(return_value=True)
+        detector.check_heartbeat_timeout = Mock()
+        detector.wait_for_disconnect = AsyncMock(side_effect=wait_for_disconnect_side_effect)
+        detector.disconnect = AsyncMock()
+
+        await controller._async_detector_loop(detector)
+
+        assert detector.connect.await_count >= 2
+        assert detector.subscribe_to_states.await_count >= 2
+        assert detector.disconnect.await_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_detector_loop_reconnects_when_probe_fails(self):
+        controller = RoomController()
+        controller._running = True
+        controller._detector_poll_interval = 0.01
+        controller._detector_probe_timeout = 0.01
+        controller._detector_reconnect_initial_delay = 0.01
+        controller._detector_reconnect_max_delay = 0.02
+
+        detector = Mock()
+        detector.name = "Detector 1"
+
+        connect_calls = {"count": 0}
+
+        async def connect_side_effect():
+            connect_calls["count"] += 1
+            if connect_calls["count"] >= 2:
+                controller._running = False
+
+        detector.connect = AsyncMock(side_effect=connect_side_effect)
+        detector.subscribe_to_states = AsyncMock()
+        detector.has_heartbeat_timed_out = Mock(return_value=True)
+        detector.probe_sensor_alive = AsyncMock(return_value=False)
+        detector.check_heartbeat_timeout = Mock()
+        detector.wait_for_disconnect = AsyncMock(return_value=False)
+        detector.disconnect = AsyncMock()
+
+        await controller._async_detector_loop(detector)
+
+        assert connect_calls["count"] >= 2
+        detector.probe_sensor_alive.assert_awaited()
+        detector.check_heartbeat_timeout.assert_not_called()
