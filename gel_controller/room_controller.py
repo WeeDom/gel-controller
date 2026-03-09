@@ -9,6 +9,7 @@ import threading
 import sqlite3
 import os
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, TYPE_CHECKING, Optional
@@ -83,6 +84,7 @@ class RoomController:
         if room not in self._rooms:
             self._rooms.append(room)
             room.set_capture_callback(self._on_room_capture_complete)
+            room.set_vacated_callback(self._on_room_vacated)
             logger.info(f"Added room: {room.name} (ID: {room.room_id})")
         else:
             logger.warning(f"Room {room.name} already exists in controller")
@@ -97,6 +99,7 @@ class RoomController:
         if room in self._rooms:
             self._rooms.remove(room)
             room.set_capture_callback(None)
+            room.set_vacated_callback(None)
             logger.info(f"Removed room: {room.name} (ID: {room.room_id})")
         else:
             logger.warning(f"Room {room.name} not found in controller")
@@ -205,6 +208,28 @@ class RoomController:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS occupancy_cycles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    cycle_id TEXT NOT NULL UNIQUE,
+                    room_id TEXT NOT NULL,
+                    room_name TEXT NOT NULL,
+                    vacated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cycle_captures (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    cycle_id TEXT NOT NULL REFERENCES occupancy_cycles(cycle_id),
+                    filename TEXT NOT NULL,
+                    camera_name TEXT NOT NULL,
+                    captured_at TEXT NOT NULL
+                )
+                """
+            )
             conn.commit()
 
     def _record_baseline_capture(self, camera_name: str, captured_at: str, location: str) -> None:
@@ -217,7 +242,11 @@ class RoomController:
             conn.commit()
 
     def _on_room_capture_complete(self, room: 'Room', captured_files: List[Path]) -> None:
-        """Kick off asynchronous spot-the-diff analysis for new capture files."""
+        """Record cycle captures and kick off asynchronous spot-the-diff analysis."""
+        cycle_id = getattr(room, '_current_cycle_id', None)
+        if cycle_id and captured_files:
+            self._record_cycle_captures(cycle_id, captured_files)
+
         if not self._spot_diff_enabled:
             return
 
@@ -229,6 +258,33 @@ class RoomController:
                 daemon=True,
             )
             thread.start()
+
+    def _on_room_vacated(self, room: 'Room') -> None:
+        """Open an occupancy cycle record when a room transitions occupied → empty."""
+        cycle_id = str(uuid.uuid4())
+        vacated_at = datetime.now().isoformat()
+        with sqlite3.connect(self._baseline_db_path) as conn:
+            conn.execute(
+                "INSERT INTO occupancy_cycles (cycle_id, room_id, room_name, vacated_at) VALUES (?, ?, ?, ?)",
+                (cycle_id, room.room_id, room.name, vacated_at),
+            )
+            conn.commit()
+        room._current_cycle_id = cycle_id
+        logger.info(f"Opened occupancy cycle {cycle_id} for room {room.room_id}")
+
+    def _record_cycle_captures(self, cycle_id: str, captured_files: List[Path]) -> None:
+        """Record capture filenames against an occupancy cycle."""
+        captured_at = datetime.now().isoformat()
+        with sqlite3.connect(self._baseline_db_path) as conn:
+            for path in captured_files:
+                m = _CAPTURE_RE.match(path.name)
+                camera_name = m.group("camera_name") if m else path.stem
+                conn.execute(
+                    "INSERT INTO cycle_captures (cycle_id, filename, camera_name, captured_at) VALUES (?, ?, ?, ?)",
+                    (cycle_id, path.name, camera_name, captured_at),
+                )
+            conn.commit()
+        logger.info(f"Recorded {len(captured_files)} capture(s) for cycle {cycle_id}")
 
     def analyze_latest(self, room_id: Optional[str] = None) -> Dict[str, object]:
         """Queue spot-the-diff for the latest capture image(s)."""
@@ -376,11 +432,11 @@ class RoomController:
         logger.info(f"Spot-the-diff report saved to {report_path}")
 
     def list_events(self, room_id: Optional[str] = None) -> Dict[str, object]:
-        """Return capture events grouped by room, each with its spot-the-diff report if available."""
-        captures_dir = Path("captures")
-        spot_diff_dir = self._spot_diff_logs_dir
+        """Return occupancy cycles grouped by room, each with per-camera captures and reports."""
+        _VERDICT_ORDER = ["significant_change", "major_change", "minor_change", "no_change"]
 
         # Build latest-baseline lookup: (room_id, camera_name) → filename
+        captures_dir = Path("captures")
         latest_baselines: Dict[tuple, str] = {}
         for bpath in captures_dir.glob("baseline-*.jp*"):
             m = _BASELINE_RE.match(bpath.name)
@@ -395,36 +451,72 @@ class RoomController:
                 if ex_m and m.group("timestamp") > ex_m.group("timestamp"):
                     latest_baselines[key] = bpath.name
 
-        rooms: Dict[str, list] = {}
-        for path in sorted(captures_dir.glob("capture-*.jp*"), key=lambda p: p.name, reverse=True):
-            m = _CAPTURE_RE.match(path.name)
-            if not m:
-                continue
-            rid = m.group("room_id")
-            if room_id is not None and rid != room_id:
-                continue
+        if not self._baseline_db_path.exists():
+            return {"ok": True, "rooms": {}}
 
-            camera = m.group("camera_name")
-            timestamp = m.group("timestamp")
+        with sqlite3.connect(self._baseline_db_path) as conn:
+            conn.row_factory = sqlite3.Row
 
-            report_name = f"spot-the-diff-{rid}-{path.stem}.json"
-            report_path = spot_diff_dir / report_name
-            report = None
-            if report_path.exists():
-                try:
-                    report = json.loads(report_path.read_text(encoding="utf-8"))
-                except Exception:
-                    pass
+            if room_id is not None:
+                cycles = conn.execute(
+                    "SELECT * FROM occupancy_cycles WHERE room_id = ? ORDER BY vacated_at DESC",
+                    (room_id,),
+                ).fetchall()
+            else:
+                cycles = conn.execute(
+                    "SELECT * FROM occupancy_cycles ORDER BY vacated_at DESC"
+                ).fetchall()
 
-            rooms.setdefault(rid, []).append({
-                "capture_file": path.name,
-                "room_id": rid,
-                "camera": camera,
-                "timestamp": timestamp,
-                "has_report": report is not None,
-                "report": report,
-                "baseline_file": latest_baselines.get((rid, camera)),
-            })
+            rooms: Dict[str, list] = {}
+            for cycle in cycles:
+                cycle_id = cycle["cycle_id"]
+                rid = cycle["room_id"]
+
+                capture_rows = conn.execute(
+                    "SELECT * FROM cycle_captures WHERE cycle_id = ? ORDER BY captured_at",
+                    (cycle_id,),
+                ).fetchall()
+
+                captures_out = []
+                verdicts_seen: List[str] = []
+                for cap in capture_rows:
+                    filename = cap["filename"]
+                    cam_name = cap["camera_name"]
+                    stem = Path(filename).stem
+                    report_name = f"spot-the-diff-{rid}-{stem}.json"
+                    report_path = self._spot_diff_logs_dir / report_name
+                    report = None
+                    if report_path.exists():
+                        try:
+                            report = json.loads(report_path.read_text(encoding="utf-8"))
+                        except Exception:
+                            pass
+                    if report:
+                        v = report.get("overall_verdict", "")
+                        if v:
+                            verdicts_seen.append(v)
+                    captures_out.append({
+                        "filename": filename,
+                        "camera_name": cam_name,
+                        "captured_at": cap["captured_at"],
+                        "has_report": report is not None,
+                        "report": report,
+                        "baseline_file": latest_baselines.get((rid, cam_name)),
+                    })
+
+                overall_verdict = next(
+                    (v for v in _VERDICT_ORDER if v in verdicts_seen),
+                    verdicts_seen[0] if verdicts_seen else None,
+                )
+
+                rooms.setdefault(rid, []).append({
+                    "cycle_id": cycle_id,
+                    "room_id": rid,
+                    "room_name": cycle["room_name"],
+                    "vacated_at": cycle["vacated_at"],
+                    "overall_verdict": overall_verdict,
+                    "captures": captures_out,
+                })
 
         return {"ok": True, "rooms": rooms}
 

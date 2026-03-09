@@ -42,6 +42,8 @@ class Room:
         self._cameras: List['Camera'] = []
         self._person_detectors: List['PersonDetector'] = []
         self._capture_callback: Optional[Callable[['Room', List[Path]], None]] = None
+        self._vacated_callback: Optional[Callable[['Room'], None]] = None
+        self._current_cycle_id: Optional[str] = None
 
         # Capture timer management
         self._empty_timer: Optional[threading.Timer] = None
@@ -125,6 +127,11 @@ class Room:
 
             # Handle state transitions
             if state == "empty" and old_state == "occupied":
+                if self._vacated_callback is not None:
+                    try:
+                        self._vacated_callback(self)
+                    except Exception as e:
+                        logger.error(f"Error in vacated callback for {self._name}: {e}")
                 self._start_empty_timer()
             elif state == "occupied" and old_state == "empty":
                 self._capture_done_for_empty_cycle = False
@@ -183,6 +190,10 @@ class Room:
     def set_capture_callback(self, callback: Optional[Callable[['Room', List[Path]], None]]) -> None:
         """Set callback invoked after a room capture set completes."""
         self._capture_callback = callback
+
+    def set_vacated_callback(self, callback: Optional[Callable[['Room'], None]]) -> None:
+        """Set callback invoked when room transitions occupied → empty."""
+        self._vacated_callback = callback
 
     # Camera management
     def get_cameras(self, search_network: bool = True) -> List['Camera']:
