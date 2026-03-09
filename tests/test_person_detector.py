@@ -7,6 +7,7 @@ import asyncio
 from unittest.mock import Mock, patch, MagicMock, AsyncMock
 from gel_controller.person_detector import PersonDetector
 from gel_controller.room import Room
+from aioesphomeapi.core import TimeoutAPIError
 
 
 class TestPersonDetectorInitialization:
@@ -186,6 +187,26 @@ class TestPersonDetectorAPIConnection:
         await detector.subscribe_to_states()
 
         mock_aioesphomeapi.subscribe_states.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_detector_forces_disconnect_after_timeout(self, mock_aioesphomeapi):
+        """Graceful disconnect timeout should fall back to forced disconnect."""
+        detector = PersonDetector(
+            name="Detector 1",
+            host="192.168.1.189",
+            port=6053,
+            encryption_key=None
+        )
+        await detector.connect()
+
+        mock_aioesphomeapi.disconnect = AsyncMock(
+            side_effect=[TimeoutAPIError("timeout"), None]
+        )
+
+        await detector.disconnect()
+
+        assert mock_aioesphomeapi.disconnect.await_count == 2
+        assert mock_aioesphomeapi.disconnect.await_args_list[1].kwargs == {"force": True}
 
 
 class TestPersonDetectorHeartbeatHandling:

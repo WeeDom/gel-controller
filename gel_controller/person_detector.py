@@ -7,6 +7,7 @@ import time
 import asyncio
 from typing import Optional, TYPE_CHECKING
 from aioesphomeapi.client import APIClient
+from aioesphomeapi.core import TimeoutAPIError
 
 if TYPE_CHECKING:
     from .room import Room
@@ -212,6 +213,24 @@ class PersonDetector:
             try:
                 await self._api_client.disconnect()
                 logger.info(f"Detector {self._name} disconnected from {self._host}")
+            except TimeoutAPIError as e:
+                logger.warning(
+                    "Detector %s graceful disconnect timed out for %s:%s (%s); forcing disconnect",
+                    self._name,
+                    self._host,
+                    self._port,
+                    e,
+                )
+                try:
+                    await self._api_client.disconnect(force=True)
+                except Exception as force_error:
+                    logger.debug(
+                        "Detector %s forced disconnect also failed for %s:%s: %s",
+                        self._name,
+                        self._host,
+                        self._port,
+                        force_error,
+                    )
             except Exception as e:
                 logger.error(f"Error disconnecting detector {self._name}: {e}")
             finally:
