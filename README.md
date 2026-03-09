@@ -70,7 +70,8 @@ Target a specific room:
 python3 capture_baseline.py --room-id 101
 ```
 
-This sends a local command to the controller (`POST /capture-baseline` on `127.0.0.1:8765`).
+This sends a local command to the controller (`POST /api/v1/capture-baseline` on `127.0.0.1:8765`).
+Interactive API docs are available at `http://127.0.0.1:8765/docs` while the controller is running.
 
 Successful baseline captures are recorded in SQLite at `logs/baselines.db` in table `baselines` with:
 - `camera_name`

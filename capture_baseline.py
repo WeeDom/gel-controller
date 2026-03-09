@@ -17,7 +17,7 @@ def main() -> int:
     if args.room_id:
         payload["room_id"] = args.room_id
 
-    url = f"http://{args.host}:{args.port}/capture-baseline"
+    url = f"http://{args.host}:{args.port}/api/v1/capture-baseline"
     data = json.dumps(payload).encode("utf-8")
 
     req = request.Request(
