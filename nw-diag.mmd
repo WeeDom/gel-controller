@@ -1,0 +1,27 @@
+flowchart LR
+  subgraph Field[Field Network]
+    CAM1[ESP32-CAM cam1\n10.42.0.57:80/81]
+    CAM2[ESP32-CAM cam1\n10.42.0.187:80/81]
+    RADAR[MR60 Radar\n10.42.0.156:6053]
+    CTRL[gel-controller process\nControl API 127.0.0.1:8765]
+    CAM1 -->|/capture| CTRL
+    CAM2 -->|/capture| CTRL
+    RADAR -->|heartbeat| CTRL
+  end
+
+  subgraph Bastion["guard-e-loo"]
+    TUN[Reverse SSH tunnel listener\n127.0.0.1:20001]
+    BRIDGE["int docker nw -> localhost"]
+    WEB["web docker container(Gunicorn/Flask)"]
+  end
+
+  CTRL -.->|autossh -R ...:20001:127.0.0.1:8765| TUN
+  TUN --> BRIDGE
+  BRIDGE --> WEB
+
+  WEB -->|GET /status\nPOST /capture-baseline\nPOST /analyze-latest| BRIDGE
+
+  USER[Admin Browser] -->|HTTPS| NGINX[nginx reverse proxy]
+  NGINX -->|proxy_pass| WEB
+
+  WEB -. config .-> ENV[".env\nGEL_CONTROLLER_ENDPOINTS=gel-controller-1"]
