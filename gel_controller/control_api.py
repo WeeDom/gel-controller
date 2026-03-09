@@ -5,12 +5,13 @@ FastAPI control API server for RoomController runtime commands.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from typing import Any, Dict, Optional, Protocol
 
 import uvicorn
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,12 @@ class ControlAPIController(Protocol):
         ...
 
     def analyze_latest(self, room_id: Optional[str] = None) -> Dict[str, object]:
+        ...
+
+    def list_events(self, room_id: Optional[str] = None) -> Dict[str, object]:
+        ...
+
+    def get_image_bytes(self, filename: str) -> Optional[bytes]:
         ...
 
 
@@ -82,6 +89,30 @@ class ControlAPIServer:
             result = self._controller.analyze_latest(room_id=room_id)
             http_status = 200 if result.get("ok") else 404
             return JSONResponse(content=result, status_code=http_status)
+
+        _SAFE_IMAGE_RE = re.compile(
+            r'^(baseline|capture)-[A-Za-z0-9]+-[A-Za-z0-9]+-\d{8}_\d{6}(?:_\d+)?\.jpe?g$',
+            re.IGNORECASE,
+        )
+
+        @app.get("/api/v1/events")
+        def list_events_all() -> JSONResponse:
+            result = self._controller.list_events()
+            return JSONResponse(content=result, status_code=200 if result.get("ok") else 500)
+
+        @app.get("/api/v1/events/{room_id}")
+        def list_events_room(room_id: str) -> JSONResponse:
+            result = self._controller.list_events(room_id=room_id)
+            return JSONResponse(content=result, status_code=200 if result.get("ok") else 500)
+
+        @app.get("/api/v1/image/{filename}")
+        def get_image(filename: str) -> Response:
+            if not _SAFE_IMAGE_RE.match(filename):
+                raise HTTPException(status_code=400, detail="Invalid filename")
+            data = self._controller.get_image_bytes(filename)
+            if data is None:
+                raise HTTPException(status_code=404, detail="Image not found")
+            return Response(content=data, media_type="image/jpeg")
 
         return app
 

@@ -3,6 +3,8 @@ RoomController - Orchestrates multiple rooms with cameras and person detectors.
 """
 
 import asyncio
+import json
+import re
 import threading
 import sqlite3
 import os
@@ -12,6 +14,19 @@ from pathlib import Path
 from typing import List, Dict, TYPE_CHECKING, Optional
 import logging
 from .control_api import ControlAPIServer
+
+_CAPTURE_RE = re.compile(
+    r'^capture-(?P<room_id>[^-]+)-(?P<camera_name>.+)-(?P<timestamp>\d{8}_\d{6}(?:_\d+)?)\.jpe?g$',
+    re.IGNORECASE,
+)
+_BASELINE_RE = re.compile(
+    r'^baseline-(?P<room_id>[^-]+)-(?P<camera_name>.+)-(?P<timestamp>\d{8}_\d{6}(?:_\d+)?)\.jpe?g$',
+    re.IGNORECASE,
+)
+_SAFE_IMAGE_RE = re.compile(
+    r'^(baseline|capture)-[A-Za-z0-9]+-[A-Za-z0-9]+-\d{8}_\d{6}(?:_\d+)?\.jpe?g$',
+    re.IGNORECASE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -359,6 +374,68 @@ class RoomController:
         report_path = self._spot_diff_logs_dir / report_name
         report_path.write_text(raw + "\n", encoding="utf-8")
         logger.info(f"Spot-the-diff report saved to {report_path}")
+
+    def list_events(self, room_id: Optional[str] = None) -> Dict[str, object]:
+        """Return capture events grouped by room, each with its spot-the-diff report if available."""
+        captures_dir = Path("captures")
+        spot_diff_dir = self._spot_diff_logs_dir
+
+        # Build latest-baseline lookup: (room_id, camera_name) → filename
+        latest_baselines: Dict[tuple, str] = {}
+        for bpath in captures_dir.glob("baseline-*.jp*"):
+            m = _BASELINE_RE.match(bpath.name)
+            if not m:
+                continue
+            key = (m.group("room_id"), m.group("camera_name"))
+            existing = latest_baselines.get(key)
+            if existing is None:
+                latest_baselines[key] = bpath.name
+            else:
+                ex_m = _BASELINE_RE.match(existing)
+                if ex_m and m.group("timestamp") > ex_m.group("timestamp"):
+                    latest_baselines[key] = bpath.name
+
+        rooms: Dict[str, list] = {}
+        for path in sorted(captures_dir.glob("capture-*.jp*"), key=lambda p: p.name, reverse=True):
+            m = _CAPTURE_RE.match(path.name)
+            if not m:
+                continue
+            rid = m.group("room_id")
+            if room_id is not None and rid != room_id:
+                continue
+
+            camera = m.group("camera_name")
+            timestamp = m.group("timestamp")
+
+            report_name = f"spot-the-diff-{rid}-{path.stem}.json"
+            report_path = spot_diff_dir / report_name
+            report = None
+            if report_path.exists():
+                try:
+                    report = json.loads(report_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+
+            rooms.setdefault(rid, []).append({
+                "capture_file": path.name,
+                "room_id": rid,
+                "camera": camera,
+                "timestamp": timestamp,
+                "has_report": report is not None,
+                "report": report,
+                "baseline_file": latest_baselines.get((rid, camera)),
+            })
+
+        return {"ok": True, "rooms": rooms}
+
+    def get_image_bytes(self, filename: str) -> Optional[bytes]:
+        """Return raw JPEG bytes for a capture or baseline file, or None if not found/invalid."""
+        if not _SAFE_IMAGE_RE.match(filename):
+            return None
+        path = Path("captures") / filename
+        if not path.exists():
+            return None
+        return path.read_bytes()
 
     def _start_control_server(self) -> None:
         """Start local FastAPI control endpoint for runtime commands."""
