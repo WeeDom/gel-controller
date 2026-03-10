@@ -25,6 +25,7 @@
 #include <vector>
 #include <time.h>
 #include <mbedtls/md.h>
+#include <Preferences.h>
 
 #if defined(ARDUINO_ARCH_ESP32) && defined(CONFIG_ARDUHAL_ESP_LOG)
 #include "esp32-hal-log.h"
@@ -58,6 +59,26 @@ static char room_id[32]    = "unknown";
 static char location[32]   = "unknown";
 static float poll_interval = 10.0f;
 static char device_mac[18] = "";  // MAC address buffer
+
+static Preferences prefs;
+
+static void load_props_from_nvs() {
+  prefs.begin("cam_props", /*readOnly=*/true);
+  prefs.getString("name", device_name, sizeof(device_name));
+  prefs.getString("room_id", room_id, sizeof(room_id));
+  prefs.getString("location", location, sizeof(location));
+  poll_interval = prefs.getFloat("poll_interval", poll_interval);
+  prefs.end();
+}
+
+static void save_props_to_nvs() {
+  prefs.begin("cam_props", /*readOnly=*/false);
+  prefs.putString("name", device_name);
+  prefs.putString("room_id", room_id);
+  prefs.putString("location", location);
+  prefs.putFloat("poll_interval", poll_interval);
+  prefs.end();
+}
 
 // Shared-secret auth (Phase 1)
 // Configure these to match controller-side values.
@@ -382,11 +403,13 @@ static esp_err_t props_set_handler(httpd_req_t *req) {
     strlcpy(room_id, room_tmp, sizeof(room_id));
     strlcpy(location, location_tmp, sizeof(location));
     poll_interval = poll_tmp;
+    save_props_to_nvs();
   } else if (sscanf(buf, "{\"name\":\"%31[^\"]\",\"room_id\":\"%31[^\"]\",\"poll_interval\":%f}",
                     name_tmp, room_tmp, &poll_tmp) == 3) {
     strlcpy(device_name, name_tmp, sizeof(device_name));
     strlcpy(room_id, room_tmp, sizeof(room_id));
     poll_interval = poll_tmp;
+    save_props_to_nvs();
   }
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   return httpd_resp_send(req, "ok", 2);
@@ -1180,6 +1203,9 @@ static esp_err_t index_head_handler(httpd_req_t *req) {
 }
 
 void startCameraServer() {
+  // Load persisted props before anything else
+  load_props_from_nvs();
+
   // Initialize MAC address buffer
   String mac = WiFi.macAddress();
   strlcpy(device_mac, mac.c_str(), sizeof(device_mac));
