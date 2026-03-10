@@ -246,35 +246,37 @@ class RoomController:
             conn.commit()
 
     def _on_room_capture_complete(self, room: 'Room', captured_files: List[Path]) -> None:
-        """Record cycle captures and kick off asynchronous spot-the-diff analysis."""
+        """Record cycle captures and kick off a single spot-the-diff call for all cameras."""
         cycle_id = getattr(room, '_current_cycle_id', None)
+        event_number = getattr(room, '_current_event_number', None)
         if cycle_id and captured_files:
             self._record_cycle_captures(cycle_id, captured_files)
 
-        if not self._spot_diff_enabled:
+        if not self._spot_diff_enabled or not captured_files:
             return
 
-        for changeset_path in captured_files:
-            thread = threading.Thread(
-                target=self._analyze_changeset,
-                args=(room, changeset_path),
-                name=f"SpotDiff-{room.room_id}-{changeset_path.stem}",
-                daemon=True,
-            )
-            thread.start()
+        thread = threading.Thread(
+            target=self._analyze_event,
+            args=(room, event_number, list(captured_files)),
+            name=f"SpotDiff-{room.room_id}-event{event_number}",
+            daemon=True,
+        )
+        thread.start()
 
     def _on_room_vacated(self, room: 'Room') -> None:
         """Open an occupancy cycle record when a room transitions occupied → empty."""
         cycle_id = str(uuid.uuid4())
         vacated_at = datetime.now().isoformat()
         with sqlite3.connect(self._baseline_db_path) as conn:
-            conn.execute(
+            cur = conn.execute(
                 "INSERT INTO occupancy_cycles (cycle_id, room_id, room_name, vacated_at) VALUES (?, ?, ?, ?)",
                 (cycle_id, room.room_id, room.name, vacated_at),
             )
             conn.commit()
+            event_number = cur.lastrowid
         room._current_cycle_id = cycle_id
-        logger.info(f"Opened occupancy cycle {cycle_id} for room {room.room_id}")
+        room._current_event_number = event_number
+        logger.info(f"Opened occupancy cycle {cycle_id} (event #{event_number}) for room {room.room_id}")
 
     def _record_cycle_captures(self, cycle_id: str, captured_files: List[Path]) -> None:
         """Record capture filenames against an occupancy cycle."""
@@ -312,16 +314,25 @@ class RoomController:
             if not candidates:
                 continue
 
-            latest_changeset = max(candidates, key=lambda p: p.stat().st_mtime)
+            # Pick latest capture per camera so all cameras are included
+            by_camera: Dict[str, Path] = {}
+            for path in candidates:
+                m = _CAPTURE_RE.match(path.name)
+                cam = m.group("camera_name") if m else path.stem
+                existing = by_camera.get(cam)
+                if existing is None or path.stat().st_mtime > existing.stat().st_mtime:
+                    by_camera[cam] = path
+
+            all_latest = list(by_camera.values())
             thread = threading.Thread(
-                target=self._analyze_changeset,
-                args=(room, latest_changeset),
-                name=f"SpotDiffManual-{room.room_id}-{latest_changeset.stem}",
+                target=self._analyze_event,
+                args=(room, None, all_latest),
+                name=f"SpotDiffManual-{room.room_id}",
                 daemon=True,
             )
             thread.start()
             queued += 1
-            queued_files.append(str(latest_changeset))
+            queued_files.extend(str(p) for p in all_latest)
 
         return {
             "ok": True,
@@ -409,28 +420,34 @@ class RoomController:
             return []
         return content[-lines:]
 
-    def _analyze_changeset(self, room: 'Room', changeset_path: Path) -> None:
-        """Run spot-the-diff against baselines for one changeset image."""
+    def _analyze_event(self, room: 'Room', event_number: Optional[int], captured_files: List[Path]) -> None:
+        """Run spot-the-diff for all cameras in one occupancy event via a single API call."""
         try:
-            from spot_the_diff import analyze_changeset_file
+            from spot_the_diff import analyze_event_files
         except Exception as e:
             logger.error(f"Spot-the-diff unavailable: {e}")
             return
 
         try:
-            raw = analyze_changeset_file(
-                changeset_path=changeset_path,
+            raw = analyze_event_files(
+                changeset_paths=captured_files,
                 room_id=room.room_id,
                 captures_dir=Path("captures"),
                 baseline_db=self._baseline_db_path,
                 model=self._spot_diff_model,
             )
         except Exception as e:
-            logger.error(f"Spot-the-diff failed for {changeset_path.name}: {e}")
+            logger.error(
+                f"Spot-the-diff failed for event #{event_number} room {room.room_id}: {e}"
+            )
             return
 
         self._spot_diff_logs_dir.mkdir(parents=True, exist_ok=True)
-        report_name = f"spot-the-diff-{room.room_id}-{changeset_path.stem}.json"
+        if event_number is not None:
+            label = f"event{event_number:05d}"
+        else:
+            label = f"manual-{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        report_name = f"spot-the-diff-{room.room_id}-{label}.json"
         report_path = self._spot_diff_logs_dir / report_name
         report_path.write_text(raw + "\n", encoding="utf-8")
         logger.info(f"Spot-the-diff report saved to {report_path}")
@@ -475,6 +492,26 @@ class RoomController:
             for cycle in cycles:
                 cycle_id = cycle["cycle_id"]
                 rid = cycle["room_id"]
+                event_number: int = cycle["id"]
+
+                # Load event-level report (new multi-camera style)
+                event_report_path = (
+                    self._spot_diff_logs_dir / f"spot-the-diff-{rid}-event{event_number:05d}.json"
+                )
+                event_report = None
+                if event_report_path.exists():
+                    try:
+                        event_report = json.loads(event_report_path.read_text(encoding="utf-8"))
+                    except Exception:
+                        pass
+
+                # Build per-camera lookup from event report
+                per_cam_by_name: Dict[str, dict] = {}
+                if event_report and isinstance(event_report.get("per_camera"), list):
+                    for pc in event_report["per_camera"]:
+                        name = pc.get("camera_name", "")
+                        if name:
+                            per_cam_by_name[name] = pc
 
                 capture_rows = conn.execute(
                     "SELECT * FROM cycle_captures WHERE cycle_id = ? ORDER BY captured_at",
@@ -486,39 +523,61 @@ class RoomController:
                 for cap in capture_rows:
                     filename = cap["filename"]
                     cam_name = cap["camera_name"]
-                    stem = Path(filename).stem
-                    report_name = f"spot-the-diff-{rid}-{stem}.json"
-                    report_path = self._spot_diff_logs_dir / report_name
+
+                    # Prefer event-level report; fall back to legacy per-capture report
                     report = None
-                    if report_path.exists():
-                        try:
-                            report = json.loads(report_path.read_text(encoding="utf-8"))
-                        except Exception:
-                            pass
-                    if report:
-                        v = report.get("overall_verdict", "")
-                        if v:
-                            verdicts_seen.append(v)
+                    if event_report:
+                        per_cam = per_cam_by_name.get(cam_name)
+                        if per_cam:
+                            # Synthesise a per-camera-shaped report for the table row
+                            report = {
+                                "overall_verdict": per_cam.get("status"),
+                                "confidence": per_cam.get("camera_confidence"),
+                                "summary": event_report.get("summary", ""),
+                                "viewing_angle": per_cam.get("viewing_angle"),
+                                "per_camera": [per_cam],
+                                "cross_camera_validation": event_report.get("cross_camera_validation"),
+                                "recommended_actions": event_report.get("recommended_actions", []),
+                            }
+                    if report is None:
+                        stem = Path(filename).stem
+                        old_path = self._spot_diff_logs_dir / f"spot-the-diff-{rid}-{stem}.json"
+                        if old_path.exists():
+                            try:
+                                report = json.loads(old_path.read_text(encoding="utf-8"))
+                            except Exception:
+                                pass
+
+                    v = (report or {}).get("overall_verdict", "")
+                    if v:
+                        verdicts_seen.append(v)
+
                     captures_out.append({
                         "filename": filename,
                         "camera_name": cam_name,
                         "captured_at": cap["captured_at"],
                         "has_report": report is not None,
                         "report": report,
+                        "event_report": event_report,
                         "baseline_file": latest_baselines.get((rid, cam_name)),
                     })
 
-                overall_verdict = next(
-                    (v for v in _VERDICT_ORDER if v in verdicts_seen),
-                    verdicts_seen[0] if verdicts_seen else None,
-                )
+                if event_report:
+                    overall_verdict = event_report.get("overall_verdict")
+                else:
+                    overall_verdict = next(
+                        (v for v in _VERDICT_ORDER if v in verdicts_seen),
+                        verdicts_seen[0] if verdicts_seen else None,
+                    )
 
                 rooms.setdefault(rid, []).append({
                     "cycle_id": cycle_id,
+                    "event_number": event_number,
                     "room_id": rid,
                     "room_name": cycle["room_name"],
                     "vacated_at": cycle["vacated_at"],
                     "overall_verdict": overall_verdict,
+                    "event_report": event_report,
                     "captures": captures_out,
                 })
 

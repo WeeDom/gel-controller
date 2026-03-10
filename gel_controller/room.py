@@ -44,6 +44,7 @@ class Room:
         self._capture_callback: Optional[Callable[['Room', List[Path]], None]] = None
         self._vacated_callback: Optional[Callable[['Room'], None]] = None
         self._current_cycle_id: Optional[str] = None
+        self._current_event_number: Optional[int] = None
 
         # Capture timer management
         self._empty_timer: Optional[threading.Timer] = None
