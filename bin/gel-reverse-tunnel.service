@@ -7,8 +7,8 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-User=gel
-Group=gel
+User=weedom
+Group=weedom
 EnvironmentFile=-/etc/gel-controller/tunnel.env
 ExecStart=/opt/gel-controller/bin/gel-reverse-tunnel.sh
 Restart=always
