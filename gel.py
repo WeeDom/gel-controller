@@ -30,6 +30,7 @@ def _maybe_reexec_with_venv_python() -> None:
 _maybe_reexec_with_venv_python()
 
 from gel_controller import Room, RoomController
+from gel_controller.registration import ensure_registered
 
 # Create logs directory
 log_dir = Path("logs")
@@ -72,6 +73,10 @@ cameras = room.get_cameras()
 print(f"✓ Cameras: {len(cameras)}")
 for camera in cameras:
     print(f"  - {camera.name} (MAC: {camera.mac}) @ {camera.ip}:{camera._port}")
+
+# Register with guard-e-loo.co.uk (no-op if already approved or creds not set)
+room_names = [r.name for r in room_controller.get_rooms()]
+ensure_registered(rooms=room_names, capabilities=["mmwave", "camera"])
 
 # Setup signal handler for graceful shutdown
 def signal_handler(sig, frame):

@@ -3,6 +3,7 @@ PersonDetector - Monitors ESPHome device for heartbeat data to detect occupancy.
 """
 
 import logging
+import threading
 import time
 import asyncio
 from typing import Optional, TYPE_CHECKING
@@ -20,7 +21,9 @@ class PersonDetector:
         "_ip", "_name", "_port", "_host", "_encryption_key",
         "_heartbeat_timeout", "_last_heartbeat_time",
         "_api_client", "_heartbeat_sensor_key", "_room",
-        "_disconnect_event")
+        "_disconnect_event",
+        "_presence_sensor_key", "_presence_detected",
+        "_presence_confirmed_timeout", "_presence_cleared_at", "_empty_confirm_timer")
 
     """
     Person detector using ESPHome device with heartbeat sensor.
@@ -36,7 +39,7 @@ class PersonDetector:
         port: int = 6053,
         room: Optional['Room'] = None,
         encryption_key: Optional[str] = None,
-        heartbeat_timeout: float = 10.0
+        heartbeat_timeout: float = 300.0
     ):
         """
         Initialize a PersonDetector.
@@ -46,7 +49,7 @@ class PersonDetector:
             host: ESPHome device hostname or IP
             port: ESPHome API port (default: 6053)
             encryption_key: Optional encryption key for secure connection
-            heartbeat_timeout: Timeout in seconds before considering room empty (default: 10.0)
+            heartbeat_timeout: Timeout in seconds before considering room empty (default: 300.0 = 5 minutes)
         """
         self._name = name
         self._host = host
@@ -57,6 +60,11 @@ class PersonDetector:
         self._last_heartbeat_time: Optional[float] = None
         self._api_client: Optional[APIClient] = None
         self._heartbeat_sensor_key: Optional[int] = None
+        self._presence_sensor_key: Optional[int] = None
+        self._presence_detected: bool = False
+        self._presence_confirmed_timeout: float = 60.0  # seconds after both signals clear before declaring empty
+        self._presence_cleared_at: Optional[float] = None
+        self._empty_confirm_timer: Optional[threading.Timer] = None
         self._disconnect_event: Optional[asyncio.Event] = None
 
     ## mutable
@@ -180,16 +188,26 @@ class PersonDetector:
             # Get device entities to find heartbeat sensor
             entities, services = await self._api_client.list_entities_services()
 
-            # Find the heartbeat sensor
+            # Reset all presence state on (re)connect so stale timers don't carry over
+            self._cancel_empty_confirm_timer()
+            self._presence_cleared_at = None
+            # Find the heartbeat sensor and the has_target presence binary sensor
+            self._presence_sensor_key = None
+            self._presence_detected = False
             for entity in entities:
                 print(f"  - Entity: {entity.name} (key: {entity.key}, type: {type(entity).__name__})")
-                if hasattr(entity, 'name') and 'heart rate' in entity.name.lower():
+                name_lower = entity.name.lower() if hasattr(entity, 'name') else ""
+                if 'heart rate' in name_lower and self._heartbeat_sensor_key is None:
                     self._heartbeat_sensor_key = entity.key
                     logger.info(f"Found heartbeat sensor: {entity.name} (key: {entity.key})")
-                    break
+                elif 'person information' in name_lower or 'has_target' in name_lower:
+                    self._presence_sensor_key = entity.key
+                    logger.info(f"Found presence sensor: {entity.name} (key: {entity.key})")
 
             if self._heartbeat_sensor_key is None:
                 logger.warning(f"No heartbeat sensor found on device {self._host}")
+            if self._presence_sensor_key is None:
+                logger.warning(f"No presence (has_target) sensor found on device {self._host} — empty detection will rely on heart rate alone")
 
         except Exception as e:
             logger.error(f"Failed to connect detector {self._name} to {self._host}: {e}")
@@ -235,6 +253,7 @@ class PersonDetector:
                 logger.error(f"Error disconnecting detector {self._name}: {e}")
             finally:
                 self._disconnect_event = None
+                self._cancel_empty_confirm_timer()
 
     async def wait_for_disconnect(self, timeout: float) -> bool:
         """
@@ -310,7 +329,25 @@ class PersonDetector:
         Args:
             state: State object from aioesphomeapi
         """
-        # Check if this is the heartbeat sensor
+        # Primary occupancy gate: has_target binary sensor ("Person Information")
+        if self._presence_sensor_key is not None and state.key == self._presence_sensor_key:
+            self._presence_detected = bool(state.state)
+            logger.info(f"👤 Presence sensor update: {'DETECTED' if self._presence_detected else 'CLEARED'}")
+            if self._presence_detected:
+                # Person re-detected — cancel any pending empty confirmation
+                self._cancel_empty_confirm_timer()
+                self._presence_cleared_at = None
+                if self.room:
+                    self.room.state = "occupied"
+            else:
+                # Presence cleared — start an event-driven confirmation window.
+                # If both this AND heartbeat stay absent for _presence_confirmed_timeout
+                # seconds we declare empty without waiting for the full heartbeat_timeout.
+                self._presence_cleared_at = time.time()
+                self._start_empty_confirm_timer()
+            return
+
+        # Secondary signal: heart rate (keeps the timeout clock alive while person is still)
         if self._heartbeat_sensor_key is not None and state.key == self._heartbeat_sensor_key:
             heart_rate = float(state.state)
             logger.info(f"💓 Heartbeat sensor update: {heart_rate} bpm")
@@ -328,6 +365,9 @@ class PersonDetector:
         """
         if heart_rate > 0:
             self._last_heartbeat_time = time.time()
+            # Heartbeat means someone is present — cancel any empty confirmation in flight
+            self._cancel_empty_confirm_timer()
+            self._presence_cleared_at = None
 
             # Update room state to occupied
             if self.room:
@@ -338,8 +378,21 @@ class PersonDetector:
         """
         Handle heartbeat timeout (no heartbeat detected).
 
-        Sets room state to empty.
+        Sets room state to empty only when the has_target presence sensor also
+        reports no target.  If the presence sensor is still active the room is
+        NOT declared empty — this prevents photos being taken while someone is
+        in the room but momentarily not producing a detectable heart rate.
         """
+        if self._presence_sensor_key is not None and self._presence_detected:
+            logger.warning(
+                f"⚠️  Detector {self._name}: heart rate timed out but presence sensor "
+                f"still active — NOT declaring room empty (person still detected)"
+            )
+            # Reset the heartbeat clock so we don't spin on this warning every second.
+            self._last_heartbeat_time = time.time()
+            return
+
+        self._cancel_empty_confirm_timer()
         self._last_heartbeat_time = None
 
         # Update room state to empty
@@ -355,9 +408,59 @@ class PersonDetector:
 
         Should be called periodically to detect when heartbeat stops.
         """
-        if not self.has_heartbeat_timed_out():
+        if not self.has_heartbeat_timed_out() or self._last_heartbeat_time is None:
             return
 
-        time_since_heartbeat = time.time() - float(self._last_heartbeat_time)
+        time_since_heartbeat = time.time() - self._last_heartbeat_time
         logger.info(f"⏱️  Heartbeat timeout after {time_since_heartbeat:.1f}s → Setting room to EMPTY")
+        self.on_heartbeat_timeout()
+
+    def _start_empty_confirm_timer(self) -> None:
+        """Start the event-driven empty-confirmation timer (cancels any existing one)."""
+        self._cancel_empty_confirm_timer()
+        self._empty_confirm_timer = threading.Timer(
+            self._presence_confirmed_timeout, self._check_empty_confirmed
+        )
+        self._empty_confirm_timer.daemon = True
+        self._empty_confirm_timer.start()
+        logger.info(
+            f"⏳ Detector {self._name}: presence cleared — will confirm empty in "
+            f"{self._presence_confirmed_timeout:.0f}s if no signals return"
+        )
+
+    def _cancel_empty_confirm_timer(self) -> None:
+        """Cancel any pending empty-confirmation timer."""
+        if self._empty_confirm_timer is not None:
+            self._empty_confirm_timer.cancel()
+            self._empty_confirm_timer = None
+
+    def _check_empty_confirmed(self) -> None:
+        """
+        Fired by the empty-confirm timer thread after _presence_confirmed_timeout seconds.
+
+        Declares the room empty only if BOTH signals are still absent.  This is the
+        event-driven path — no polling required.
+        """
+        self._empty_confirm_timer = None
+
+        if self._presence_detected:
+            logger.info(
+                f"Detector {self._name}: presence returned during confirmation window — "
+                f"aborting empty transition"
+            )
+            return
+
+        if self._last_heartbeat_time is not None:
+            elapsed = time.time() - self._last_heartbeat_time
+            if elapsed < self._presence_confirmed_timeout:
+                logger.info(
+                    f"Detector {self._name}: presence clear but heartbeat was {elapsed:.1f}s ago — "
+                    f"aborting empty transition"
+                )
+                return
+
+        logger.info(
+            f"✅ Detector {self._name}: both signals absent for "
+            f"{self._presence_confirmed_timeout:.0f}s — declaring room EMPTY (event-driven)"
+        )
         self.on_heartbeat_timeout()
