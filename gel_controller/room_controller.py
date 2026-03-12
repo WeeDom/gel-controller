@@ -421,26 +421,70 @@ class RoomController:
         return content[-lines:]
 
     def _analyze_event(self, room: 'Room', event_number: Optional[int], captured_files: List[Path]) -> None:
-        """Run spot-the-diff for all cameras in one occupancy event via a single API call."""
+        """Run spot-the-diff for all cameras in one occupancy event (one API call per file)."""
         try:
-            from spot_the_diff import analyze_event_files
+            from spot_the_diff import analyze_changeset_file
         except Exception as e:
             logger.error(f"Spot-the-diff unavailable: {e}")
             return
 
-        try:
-            raw = analyze_event_files(
-                changeset_paths=captured_files,
-                room_id=room.room_id,
-                captures_dir=Path("captures"),
-                baseline_db=self._baseline_db_path,
-                model=self._spot_diff_model,
-            )
-        except Exception as e:
-            logger.error(
-                f"Spot-the-diff failed for event #{event_number} room {room.room_id}: {e}"
-            )
+        _VERDICT_RANK = {
+            "significant_change": 3,
+            "major_change": 3,
+            "minor_change": 2,
+            "uncertain": 1,
+            "no_change": 0,
+        }
+
+        all_per_camera: list = []
+        all_actions: list = []
+        worst_verdict = "no_change"
+        summaries: list = []
+
+        for path in captured_files:
+            try:
+                raw = analyze_changeset_file(
+                    changeset_path=path,
+                    room_id=room.room_id,
+                    captures_dir=Path("captures"),
+                    baseline_db=self._baseline_db_path,
+                    model=self._spot_diff_model,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Spot-the-diff failed for {path.name} (event #{event_number} "
+                    f"room {room.room_id}): {e}"
+                )
+                continue
+
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                parsed = {}
+
+            verdict = parsed.get("overall_verdict", "uncertain")
+            if _VERDICT_RANK.get(verdict, 0) > _VERDICT_RANK.get(worst_verdict, 0):
+                worst_verdict = verdict
+
+            summary = parsed.get("summary", "")
+            if summary:
+                summaries.append(summary)
+
+            for pc in parsed.get("per_camera", []):
+                all_per_camera.append(pc)
+
+            all_actions.extend(parsed.get("recommended_actions", []))
+
+        if not all_per_camera and not summaries:
+            logger.warning(f"No spot-the-diff results produced for event #{event_number}")
             return
+
+        combined = {
+            "overall_verdict": worst_verdict,
+            "summary": "; ".join(summaries) if summaries else "",
+            "per_camera": all_per_camera,
+            "recommended_actions": list(dict.fromkeys(all_actions)),  # deduplicate, preserve order
+        }
 
         self._spot_diff_logs_dir.mkdir(parents=True, exist_ok=True)
         if event_number is not None:
@@ -449,7 +493,7 @@ class RoomController:
             label = f"manual-{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         report_name = f"spot-the-diff-{room.room_id}-{label}.json"
         report_path = self._spot_diff_logs_dir / report_name
-        report_path.write_text(raw + "\n", encoding="utf-8")
+        report_path.write_text(json.dumps(combined, indent=2) + "\n", encoding="utf-8")
         logger.info(f"Spot-the-diff report saved to {report_path}")
 
     def list_events(self, room_id: Optional[str] = None) -> Dict[str, object]:
