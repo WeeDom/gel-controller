@@ -21,6 +21,7 @@ sudo apt-get install -y openssh-client autossh
 2. Install launcher script + unit:
 
 ```bash
+sudo mkdir -p /opt/gel-controller/bin
 sudo install -m 0755 bin/gel-reverse-tunnel.sh /opt/gel-controller/bin/gel-reverse-tunnel.sh
 sudo install -m 0644 bin/gel-reverse-tunnel.service /etc/systemd/system/gel-reverse-tunnel.service
 ```
@@ -31,7 +32,7 @@ sudo install -m 0644 bin/gel-reverse-tunnel.service /etc/systemd/system/gel-reve
 sudo mkdir -p /etc/gel-controller/ssh
 sudo tee /etc/gel-controller/tunnel.env >/dev/null <<'EOF'
 SSH_BASTION_HOST=ssh.guard-e-loo.co.uk
-SSH_BASTION_USER=gel-controller-1
+SSH_BASTION_USER=gel-user-controller-1
 SSH_KEY_PATH=/etc/gel-controller/ssh/id_ed25519
 REMOTE_BIND_ADDRESS=127.0.0.1
 REMOTE_PORT=20001
