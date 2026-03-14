@@ -9,6 +9,7 @@
 
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <WebServer.h>
 #include <ArduinoOTA.h>
 #include <ESPmDNS.h>
 #include <mbedtls/md.h>
@@ -92,6 +93,11 @@ static void build_auth_headers(const char* method, const char* path, AuthHeaders
 }
 
 // ===========================
+// Device identity
+// ===========================
+static char device_mac[18] = "";
+
+// ===========================
 // mDNS resolution
 // ===========================
 static IPAddress g_controller_ip;
@@ -124,6 +130,8 @@ static void wifi_connect() {
   Serial.println();
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("WiFi connected: %s\n", WiFi.localIP().toString().c_str());
+    String mac = WiFi.macAddress();
+    strlcpy(device_mac, mac.c_str(), sizeof(device_mac));
     MDNS.begin(SENSOR_ID);   // advertise ourselves too
     resolve_controller();
   } else {
@@ -181,6 +189,56 @@ static void send_webhook(bool beam_broken) {
 // ===========================
 static int   last_state     = HIGH;
 static unsigned long last_change_ms = 0;
+static bool  g_stopped      = false;
+
+WebServer server(80);
+
+static void set_device_headers() {
+  server.sendHeader("X-Device-Type", "gel-breakbeam");
+  server.sendHeader("X-Device-ID",   device_mac);
+  server.sendHeader("X-Device-Name", SENSOR_ID);
+  server.sendHeader("X-Room-ID",     ROOM_ID);
+}
+
+// Handles HEAD / and GET / — allows the controller discovery scanner to
+// identify this device via X-Device-Type without having to know /health.
+static void handle_root() {
+  set_device_headers();
+  server.send(200, "application/json", "");
+}
+
+static void handle_health() {
+  char buf[256];
+  snprintf(buf, sizeof(buf),
+    "{\"ok\":true,\"sensor_id\":\"%s\",\"room_id\":\"%s\","
+    "\"stopped\":%s,\"uptime_s\":%llu,\"ip\":\"%s\"}",
+    SENSOR_ID, ROOM_ID,
+    g_stopped ? "true" : "false",
+    (unsigned long long)(esp_timer_get_time() / 1000000ULL),
+    WiFi.localIP().toString().c_str());
+  set_device_headers();
+  server.send(200, "application/json", buf);
+}
+
+static void handle_stop() {
+  g_stopped = true;
+  Serial.println("Sensor STOPPED via /stop");
+  set_device_headers();
+  server.send(200, "application/json",
+    "{\"ok\":true,\"message\":\"sensor stopped\"}");
+}
+
+static void handle_start() {
+  g_stopped = false;
+  Serial.println("Sensor STARTED via /start");
+  set_device_headers();
+  server.send(200, "application/json",
+    "{\"ok\":true,\"message\":\"sensor started\"}");
+}
+
+static void handle_not_found() {
+  server.send(404, "application/json", "{\"error\":\"not found\"}");
+}
 
 void setup() {
   Serial.begin(115200);
@@ -191,12 +249,28 @@ void setup() {
   ArduinoOTA.setHostname(SENSOR_ID);
   ArduinoOTA.begin();
 
+  // Inbound command server
+  server.on("/",       HTTP_GET,  handle_root);
+  server.on("/",       HTTP_HEAD, handle_root);
+  server.on("/health", HTTP_GET, handle_health);
+  server.on("/stop",   HTTP_POST, handle_stop);
+  server.on("/start",  HTTP_POST, handle_start);
+  server.onNotFound(handle_not_found);
+  server.begin();
+  Serial.println("Command server listening on port 80");
+
   Serial.printf("Break-beam ready on GPIO%d  sensor=%s  room=%s\n",
                 SENSOR_PIN, SENSOR_ID, ROOM_ID);
 }
 
 void loop() {
   ArduinoOTA.handle();
+  server.handleClient();
+
+  if (g_stopped) {
+    delay(10);
+    return;
+  }
 
   int state = digitalRead(SENSOR_PIN);
   unsigned long now = millis();
