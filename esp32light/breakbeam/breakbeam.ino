@@ -13,6 +13,7 @@
 #include <ArduinoOTA.h>
 #include <ESPmDNS.h>
 #include <mbedtls/md.h>
+#include <time.h>
 
 // ===========================
 // Configuration — edit these
@@ -76,9 +77,8 @@ static bool hmac_sha256_hex(const char* secret, const char* message,
 static uint32_t g_nonce_ctr = 0;
 
 static void build_auth_headers(const char* method, const char* path, AuthHeaders& h) {
-  // Seconds since boot — good enough for replay protection on a LAN
-  snprintf(h.timestamp, sizeof(h.timestamp), "%llu",
-           (unsigned long long)(esp_timer_get_time() / 1000000ULL));
+  // Wall-clock Unix time — must match the controller's time.time() check
+  snprintf(h.timestamp, sizeof(h.timestamp), "%ld", (long)time(NULL));
 
   snprintf(h.nonce, sizeof(h.nonce), "%08lx%08lx",
            (unsigned long)(ESP.getEfuseMac() & 0xFFFFFFFF),
@@ -132,6 +132,16 @@ static void wifi_connect() {
     Serial.printf("WiFi connected: %s\n", WiFi.localIP().toString().c_str());
     String mac = WiFi.macAddress();
     strlcpy(device_mac, mac.c_str(), sizeof(device_mac));
+    // Sync wall-clock time so HMAC timestamps match the controller's Unix time
+    configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+    Serial.print("NTP sync");
+    time_t now = 0;
+    for (int i = 0; i < 20 && now < 1000000000L; i++) {
+      delay(500);
+      Serial.print(".");
+      time(&now);
+    }
+    Serial.printf(" done: %ld\n", (long)now);
     MDNS.begin(SENSOR_ID);   // advertise ourselves too
     resolve_controller();
   } else {
@@ -274,6 +284,16 @@ void loop() {
 
   int state = digitalRead(SENSOR_PIN);
   unsigned long now = millis();
+
+  // Debug: print current pin level every second so we can see if it ever changes
+  static unsigned long last_debug_ms = 0;
+  if (now - last_debug_ms >= 1000) {
+    last_debug_ms = now;
+    Serial.printf("[DEBUG] GPIO%d = %s  (last_state=%s)\n",
+                  SENSOR_PIN,
+                  state == HIGH ? "HIGH" : "LOW",
+                  last_state == HIGH ? "HIGH" : "LOW");
+  }
 
   if (state != last_state && (now - last_change_ms) >= DEBOUNCE_MS) {
     last_change_ms = now;
