@@ -53,7 +53,7 @@ class RoomController:
         self._event_loop = None
         self._shutdown_event = asyncio.Event()
         self._control_server: Optional[ControlAPIServer] = None
-        self._control_host = "127.0.0.1"
+        self._control_host = os.getenv("GEL_CONTROL_HOST", "0.0.0.0")
         self._control_port = 8765
         self._baseline_db_path = Path("logs") / "baselines.db"
         self._spot_diff_enabled = os.getenv("ENABLE_SPOT_THE_DIFF", "1").lower() not in {"0", "false", "no"}
@@ -626,6 +626,29 @@ class RoomController:
                 })
 
         return {"ok": True, "rooms": rooms}
+
+    def on_breakbeam_trigger(self, sensor_id: str, room_id: str, beam_broken: bool) -> Dict[str, object]:
+        """Handle a break-beam sensor event from a LAN device.
+
+        beam_broken=True  → beam interrupted, person crossing threshold → room occupied.
+        beam_broken=False → beam restored (person cleared threshold).
+        """
+        matched_rooms = [
+            r for r in self._rooms
+            if room_id in (r.room_id, r.name, "*") or not room_id
+        ]
+        if not matched_rooms:
+            logger.warning("Breakbeam %s: no room matched room_id=%r", sensor_id, room_id)
+            return {"ok": False, "error": f"no room matched room_id={room_id!r}"}
+
+        for room in matched_rooms:
+            if beam_broken:
+                logger.info("🚨 Breakbeam %s: beam BROKEN → room %s occupied", sensor_id, room.room_id)
+                room.state = "occupied"
+            else:
+                logger.info("✅ Breakbeam %s: beam CLEAR (room %s — no state change)", sensor_id, room.room_id)
+
+        return {"ok": True, "beam_broken": beam_broken, "rooms_updated": [r.room_id for r in matched_rooms]}
 
     def get_image_bytes(self, filename: str) -> Optional[bytes]:
         """Return raw JPEG bytes for a capture or baseline file, or None if not found/invalid."""

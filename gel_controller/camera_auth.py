@@ -71,3 +71,28 @@ def signed_url_and_headers(
     if extra_headers:
         headers.update(extra_headers)
     return url, headers
+
+
+def verify_auth_headers(
+    method: str,
+    path: str,
+    query: str,
+    headers: Mapping[str, str],
+    max_age_seconds: int = 300,
+) -> bool:
+    """Verify an HMAC-SHA256 signed request from a LAN device (camera or sensor)."""
+    try:
+        timestamp = headers.get("X-Timestamp", "")
+        nonce = headers.get("X-Nonce", "")
+        signature = headers.get("X-Signature", "")
+        if not (timestamp and nonce and signature):
+            return False
+        age = abs(int(time.time()) - int(timestamp))
+        if age > max_age_seconds:
+            return False
+        signing_input = "\n".join([method.upper(), path, query, timestamp, nonce])
+        secret = get_camera_secret().encode("utf-8")
+        expected = hmac.new(secret, signing_input.encode("utf-8"), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(signature.lower(), expected.lower())
+    except Exception:
+        return False

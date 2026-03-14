@@ -10,7 +10,7 @@ import threading
 from typing import Any, Dict, Optional, Protocol
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
@@ -38,11 +38,20 @@ class ControlAPIController(Protocol):
     def get_image_bytes(self, filename: str) -> Optional[bytes]:
         ...
 
+    def on_breakbeam_trigger(self, sensor_id: str, room_id: str, beam_broken: bool) -> Dict[str, object]:
+        ...
+
 
 class RoomRequest(BaseModel):
     """Shared request payload for room-scoped control actions."""
 
     room_id: Optional[str] = None
+
+
+class BreakbeamPayload(BaseModel):
+    sensor_id: str
+    room_id: str
+    beam_broken: bool
 
 
 class ControlAPIServer:
@@ -113,6 +122,23 @@ class ControlAPIServer:
             if data is None:
                 raise HTTPException(status_code=404, detail="Image not found")
             return Response(content=data, media_type="image/jpeg")
+
+        @app.post("/api/v1/sensor/breakbeam")
+        async def breakbeam(payload: BreakbeamPayload, request: Request) -> JSONResponse:
+            from gel_controller.camera_auth import verify_auth_headers
+            if not verify_auth_headers(
+                method="POST",
+                path="/api/v1/sensor/breakbeam",
+                query="",
+                headers=dict(request.headers),
+            ):
+                raise HTTPException(status_code=401, detail="Invalid or missing HMAC signature")
+            result = self._controller.on_breakbeam_trigger(
+                sensor_id=payload.sensor_id,
+                room_id=payload.room_id,
+                beam_broken=payload.beam_broken,
+            )
+            return JSONResponse(content=result, status_code=200 if result.get("ok") else 404)
 
         return app
 
