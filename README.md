@@ -40,7 +40,7 @@ pip install -r requirements.txt
 ### Run the detector
 
 ```bash
-./detect_person.py
+./discover_devices.py
 ```
 
 Or:
@@ -88,26 +88,29 @@ python3 deploy_esp32_camera.py \
   --port 10.42.0.57 \
   --camera-name cam2 \
   --room-id kitchen \
-  --location downstairs
+  --location downstairs \
+  --cam-mode room
 ```
 
 This will:
 1. Compile `esp32cam/CameraWebServer`
 2. Upload firmware to the given port/IP
-3. Configure `/props` on the camera with `name`, `room_id`, `location` (and optional `--poll-interval`)
+3. Configure `/props` on the camera with `name`, `room_id`, `location`, `cam_mode` (and optional `--poll-interval`)
 
 By default, compile uses `PartitionScheme=min_spiffs` (OTA-capable).
 
 Useful flags:
 - `--no-upload` compile only
 - `--no-compile` upload existing build output
-- `--device-ip <ip>` configure a different device than the upload port
+- `--device-ip <ip>` override LAN auto-discovery and configure a specific device
+- `--cam-mode <room|door>` set whether the camera is a room cam or a door cam
 - `--upload-password <password>` pass OTA password non-interactively
 - `--partition-scheme <value>` override partition scheme (for example `huge_app`)
 
 Notes:
 - Use `--port 10.42.0.57` (or `.local` hostname), not `http://10.42.0.57`
 - For ESP32 OTA, omit `--protocol` unless you know you need it
+- If uploading over USB, the script now tries to discover the camera on the LAN automatically before configuring `/props`
 - If discovery is flaky, increase `--discovery-timeout` (for example `--discovery-timeout 15s`)
 
 ### Example Output

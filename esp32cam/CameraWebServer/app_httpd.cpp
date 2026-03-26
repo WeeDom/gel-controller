@@ -21,6 +21,8 @@
 #include "camera_index.h"
 #include "board_config.h"
 #include <WiFi.h>
+#include <ctype.h>
+#include <stdlib.h>
 #include <string.h>
 #include <vector>
 #include <time.h>
@@ -54,21 +56,35 @@ httpd_handle_t stream_httpd = NULL;
 httpd_handle_t camera_httpd = NULL;
 
 // camera metadata to expose to controller
-static char device_name[32] = "cam1";
+static char device_name[32] = "cam3";
 static char room_id[32]    = "unknown";
 static char location[32]   = "unknown";
+static char cam_mode [32]  = "room"; // room or door
 static float poll_interval = 10.0f;
 static char device_mac[18] = "";  // MAC address buffer
 
 static Preferences prefs;
+static bool normalize_cam_mode_value(const char *input, char *output, size_t output_len);
+static bool cam_mode_requires_encryption();
+static bool json_find_value(const char *json, const char *key, const char **value_start);
+static bool json_get_string(const char *json, const char *key, char *out, size_t out_len);
+static bool json_get_float(const char *json, const char *key, float *out);
 
 static void load_props_from_nvs() {
   prefs.begin("cam_props", /*readOnly=*/true);
   prefs.getString("name", device_name, sizeof(device_name));
   prefs.getString("room_id", room_id, sizeof(room_id));
   prefs.getString("location", location, sizeof(location));
+  prefs.getString("cam_mode", cam_mode, sizeof(cam_mode));
   poll_interval = prefs.getFloat("poll_interval", poll_interval);
   prefs.end();
+
+  char normalized_mode[32];
+  if (!normalize_cam_mode_value(cam_mode, normalized_mode, sizeof(normalized_mode))) {
+    strlcpy(cam_mode, "room", sizeof(cam_mode));
+  } else {
+    strlcpy(cam_mode, normalized_mode, sizeof(cam_mode));
+  }
 }
 
 static void save_props_to_nvs() {
@@ -76,8 +92,110 @@ static void save_props_to_nvs() {
   prefs.putString("name", device_name);
   prefs.putString("room_id", room_id);
   prefs.putString("location", location);
+  prefs.putString("cam_mode", cam_mode);
   prefs.putFloat("poll_interval", poll_interval);
   prefs.end();
+}
+
+static bool normalize_cam_mode_value(const char *input, char *output, size_t output_len) {
+  if (!input || !output || output_len == 0) {
+    return false;
+  }
+
+  if (strcmp(input, "room") == 0 || strcmp(input, "room_cam") == 0 || strcmp(input, "room-camera") == 0) {
+    strlcpy(output, "room", output_len);
+    return true;
+  }
+
+  if (strcmp(input, "unknown") == 0) {
+    strlcpy(output, "room", output_len);
+    return true;
+  }
+
+  if (strcmp(input, "door") == 0 || strcmp(input, "doorway") == 0 || strcmp(input, "door_cam") == 0 || strcmp(input, "door-camera") == 0) {
+    strlcpy(output, "door", output_len);
+    return true;
+  }
+
+  return false;
+}
+
+static bool cam_mode_requires_encryption() {
+  return strcmp(cam_mode, "door") == 0;
+}
+
+static bool json_find_value(const char *json, const char *key, const char **value_start) {
+  if (!json || !key || !value_start) {
+    return false;
+  }
+
+  char pattern[48];
+  int pattern_len = snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+  if (pattern_len <= 0 || (size_t)pattern_len >= sizeof(pattern)) {
+    return false;
+  }
+
+  const char *cursor = strstr(json, pattern);
+  if (!cursor) {
+    return false;
+  }
+
+  cursor += pattern_len;
+  while (*cursor && isspace((unsigned char)*cursor)) {
+    ++cursor;
+  }
+  if (*cursor != ':') {
+    return false;
+  }
+  ++cursor;
+  while (*cursor && isspace((unsigned char)*cursor)) {
+    ++cursor;
+  }
+
+  *value_start = cursor;
+  return true;
+}
+
+static bool json_get_string(const char *json, const char *key, char *out, size_t out_len) {
+  const char *value_start = NULL;
+  if (!out || out_len == 0) {
+    return false;
+  }
+  if (!json_find_value(json, key, &value_start) || *value_start != '"') {
+    return false;
+  }
+
+  ++value_start;
+  const char *value_end = strchr(value_start, '"');
+  if (!value_end) {
+    return false;
+  }
+
+  size_t value_len = (size_t)(value_end - value_start);
+  if (value_len >= out_len) {
+    value_len = out_len - 1;
+  }
+  memcpy(out, value_start, value_len);
+  out[value_len] = '\0';
+  return true;
+}
+
+static bool json_get_float(const char *json, const char *key, float *out) {
+  const char *value_start = NULL;
+  if (!out) {
+    return false;
+  }
+  if (!json_find_value(json, key, &value_start)) {
+    return false;
+  }
+
+  char *endptr = NULL;
+  float value = strtof(value_start, &endptr);
+  if (endptr == value_start) {
+    return false;
+  }
+  *out = value;
+  return true;
 }
 
 // Shared-secret auth (Phase 1)
@@ -372,8 +490,8 @@ static esp_err_t props_get_handler(httpd_req_t *req) {
   }
   char resp[220];
   int len = snprintf(resp, sizeof(resp),
-    "{\"name\":\"%s\",\"room_id\":\"%s\",\"location\":\"%s\",\"poll_interval\":%.1f}",
-    device_name, room_id, location, poll_interval);
+    "{\"name\":\"%s\",\"room_id\":\"%s\",\"location\":\"%s\",\"cam_mode\":\"%s\",\"poll_interval\":%.1f}",
+    device_name, room_id, location, cam_mode, poll_interval);
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   return httpd_resp_send(req, resp, len);
@@ -389,28 +507,37 @@ static esp_err_t props_set_handler(httpd_req_t *req) {
   if (rlen <= 0) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to read request");
   buf[rlen] = 0;
 
-  char name_tmp[32], room_tmp[32], location_tmp[32];
-  float poll_tmp;
-  if (sscanf(
-        buf,
-        "{\"name\":\"%31[^\"]\",\"room_id\":\"%31[^\"]\",\"location\":\"%31[^\"]\",\"poll_interval\":%f}",
-        name_tmp,
-        room_tmp,
-        location_tmp,
-        &poll_tmp
-      ) == 4) {
-    strlcpy(device_name, name_tmp, sizeof(device_name));
-    strlcpy(room_id, room_tmp, sizeof(room_id));
-    strlcpy(location, location_tmp, sizeof(location));
-    poll_interval = poll_tmp;
-    save_props_to_nvs();
-  } else if (sscanf(buf, "{\"name\":\"%31[^\"]\",\"room_id\":\"%31[^\"]\",\"poll_interval\":%f}",
-                    name_tmp, room_tmp, &poll_tmp) == 3) {
-    strlcpy(device_name, name_tmp, sizeof(device_name));
-    strlcpy(room_id, room_tmp, sizeof(room_id));
-    poll_interval = poll_tmp;
-    save_props_to_nvs();
+  char name_tmp[32];
+  char room_tmp[32];
+  char location_tmp[32];
+  char mode_tmp[32];
+  char normalized_mode[32];
+  float poll_tmp = poll_interval;
+
+  if (!json_get_string(buf, "name", name_tmp, sizeof(name_tmp))
+      || !json_get_string(buf, "room_id", room_tmp, sizeof(room_tmp))
+      || !json_get_float(buf, "poll_interval", &poll_tmp)) {
+    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid props payload");
   }
+
+  strlcpy(location_tmp, location, sizeof(location_tmp));
+  if (json_get_string(buf, "location", location_tmp, sizeof(location_tmp))) {
+    strlcpy(location, location_tmp, sizeof(location));
+  }
+
+  strlcpy(normalized_mode, cam_mode, sizeof(normalized_mode));
+  if (json_get_string(buf, "cam_mode", mode_tmp, sizeof(mode_tmp))) {
+    if (!normalize_cam_mode_value(mode_tmp, normalized_mode, sizeof(normalized_mode))) {
+      return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid cam_mode");
+    }
+  }
+
+  strlcpy(device_name, name_tmp, sizeof(device_name));
+  strlcpy(room_id, room_tmp, sizeof(room_id));
+  strlcpy(cam_mode, normalized_mode, sizeof(cam_mode));
+  poll_interval = poll_tmp;
+  save_props_to_nvs();
+
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   return httpd_resp_send(req, "ok", 2);
 }
@@ -543,7 +670,9 @@ static esp_err_t send_jpeg_with_exif(httpd_req_t *req, const uint8_t *jpeg_buf, 
   if (app1_len_field > 0xFFFF) {
     return ESP_FAIL;
   }
-
+  if (cam_mode_requires_encryption()) {
+    log_w("cam_mode=door requires encrypted capture output, but encryption is not implemented yet; sending plaintext JPEG");
+  }
   std::vector<uint8_t> app1;
   app1.reserve(2 + 2 + exif_payload_len);
 
@@ -1198,6 +1327,7 @@ static esp_err_t index_head_handler(httpd_req_t *req) {
   httpd_resp_set_hdr(req, "X-Device-Type", "gel-camera");
   httpd_resp_set_hdr(req, "X-Device-ID", device_mac);
   httpd_resp_set_hdr(req, "X-Device-Name", device_name);
+  httpd_resp_set_hdr(req, "X-Cam-Mode", cam_mode);
   httpd_resp_set_hdr(req, "X-Room-ID", room_id);
   return httpd_resp_send(req, NULL, 0);  // HEAD response: headers only, no body
 }

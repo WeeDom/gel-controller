@@ -39,7 +39,9 @@ class Camera:
         stream_url: Optional[str] = None,
         ip: Optional[str] = None,
         port: Optional[int] = None,
-        state: Optional[str] = None
+        state: Optional[str] = None,
+        cam_mode: str = "room",
+        location: Optional[str] = None,
     ):
         """
         Initialize a Camera.
@@ -78,6 +80,8 @@ class Camera:
         self.stream_url = stream_url
         self._port = port
         self._supports_control = True
+        self.cam_mode = cam_mode
+        self.location = location
 
     # Name property
     @property

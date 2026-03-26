@@ -18,8 +18,8 @@
 // ===========================
 // Configuration — edit these
 // ===========================
-const char* WIFI_SSID        = "guard-e-loo-lan";
-const char* WIFI_PASSWORD    = "B0ll0cks!";
+const char* WIFI_SSID        = "pi-lan";
+const char* WIFI_PASSWORD    = "YourPassword";
 
 // mDNS hostname of the controller on the LAN (no .local suffix needed here)
 // The Pi advertises itself as gel-controller.local

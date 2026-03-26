@@ -20,6 +20,21 @@ class TestCameraInitialization:
         assert camera.name == "Test Camera"
         assert camera.room_id == "room1"
         assert camera.status == CameraStatus.OFFLINE
+        assert camera.cam_mode == "room"
+
+    def test_camera_initialization_with_metadata(self):
+        """Camera retains discovery metadata used by controller decisions."""
+        camera = Camera(
+            name="Door Camera",
+            room_id="entrance",
+            cam_mode="door",
+            location="front-door",
+            poll_interval=7.5,
+        )
+
+        assert camera.cam_mode == "door"
+        assert camera.location == "front-door"
+        assert camera.poll_interval == 7.5
 
     def test_camera_initialization_with_custom_state(self):
         """Camera can be initialized with custom status."""

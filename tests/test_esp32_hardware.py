@@ -132,6 +132,7 @@ class TestCameraPropsGet:
         data = response.json()
         assert "name" in data
         assert "room_id" in data
+        assert "cam_mode" in data
         assert "poll_interval" in data
 
     def test_get_props_has_cors_header(self, esp32_device):
@@ -149,6 +150,7 @@ class TestCameraPropsSet:
         new_props = {
             "name": "test_camera",
             "room_id": "test_room",
+            "cam_mode": "door",
             "poll_interval": 5.5
         }
 
@@ -163,7 +165,43 @@ class TestCameraPropsSet:
 
         assert data["name"] == "test_camera"
         assert data["room_id"] == "test_room"
+        assert data["cam_mode"] == "door"
         assert data["poll_interval"] == 5.5
+
+    def test_set_props_normalizes_cam_mode_alias(self, esp32_device):
+        """Should normalize doorway aliases to the canonical cam mode."""
+        response = camera_post(
+            esp32_device,
+            "/props",
+            {"name": "cam", "room_id": "room", "location": "door", "cam_mode": "doorway", "poll_interval": 10.0},
+        )
+
+        assert response.status_code == 200
+
+        data = camera_get(esp32_device, "/props").json()
+        assert data["cam_mode"] == "door"
+
+    def test_set_props_accepts_json_with_standard_spacing(self, esp32_device):
+        """Should parse normal JSON encoder output, not just a hand-packed layout."""
+        response = camera_post(
+            esp32_device,
+            "/props",
+            {
+                "poll_interval": 12.5,
+                "cam_mode": "room",
+                "location": "hallway",
+                "room_id": "room",
+                "name": "cam-spaced",
+            },
+        )
+
+        assert response.status_code == 200
+
+        data = camera_get(esp32_device, "/props").json()
+        assert data["name"] == "cam-spaced"
+        assert data["location"] == "hallway"
+        assert data["cam_mode"] == "room"
+        assert data["poll_interval"] == 12.5
 
     def test_set_props_with_float_interval(self, esp32_device):
         """Should accept float values for poll_interval."""
@@ -189,6 +227,7 @@ class TestCameraPropsIntegration:
         original = {
             "name": "front_door",
             "room_id": "entrance",
+            "cam_mode": "door",
             "poll_interval": 3.14
         }
 
@@ -201,6 +240,7 @@ class TestCameraPropsIntegration:
 
         assert data["name"] == original["name"]
         assert data["room_id"] == original["room_id"]
+        assert data["cam_mode"] == original["cam_mode"]
         # Float comparison with tolerance
         assert abs(data["poll_interval"] - original["poll_interval"]) < 0.01
 

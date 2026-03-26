@@ -20,9 +20,32 @@ const char *password = "B0ll0cks!";
 const char* ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = 0;        // GMT+0 for UK
 const int daylightOffset_sec = 3600; // 1 hour for BST
+unsigned long lastReconnectAttemptMs = 0;
+bool wifiStarted = false;
 
 void startCameraServer();
 void setupLedFlash();
+static esp_err_t initCameraWithFallback(camera_config_t *config);
+
+void printWifiDetails() {
+  Serial.print("SSID: ");
+  Serial.println(WiFi.SSID());
+  Serial.print("BSSID: ");
+  Serial.println(WiFi.BSSIDstr());
+  Serial.print("Channel: ");
+  Serial.println(WiFi.channel());
+  Serial.print("RSSI: ");
+  Serial.print(WiFi.RSSI());
+  Serial.println(" dBm");
+  Serial.print("Local IP: ");
+  Serial.println(WiFi.localIP());
+  Serial.print("Gateway: ");
+  Serial.println(WiFi.gatewayIP());
+  Serial.print("Subnet: ");
+  Serial.println(WiFi.subnetMask());
+  Serial.print("DNS: ");
+  Serial.println(WiFi.dnsIP());
+}
 
 const char* wifiStatusToString(wl_status_t status) {
   switch(status) {
@@ -96,9 +119,9 @@ void setup() {
 #endif
 
   // camera init
-  esp_err_t err = esp_camera_init(&config);
+  esp_err_t err = initCameraWithFallback(&config);
   if (err != ESP_OK) {
-    Serial.printf("Camera init failed with error 0x%x", err);
+    Serial.printf("Camera init failed with error 0x%x\n", err);
     return;
   }
 
@@ -146,12 +169,17 @@ void setup() {
   }
   Serial.println("");
 
-  WiFi.begin(ssid, password, 11);
+  // Avoid pinning a channel so reconnects still work if AP channel changes.
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
   WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(false);
+  wifiStarted = true;
 
   Serial.print("WiFi connecting to: ");
   Serial.print(ssid);
-  Serial.println(" on channel 11");
+  Serial.println(" (auto channel)");
   while (WiFi.status() != WL_CONNECTED) {
     Serial.print("\nStatus: ");
     Serial.print(wifiStatusToString(WiFi.status()));
@@ -160,6 +188,7 @@ void setup() {
   }
   Serial.println("");
   Serial.println("WiFi connected");
+  printWifiDetails();
 
   // Initialize and get the time
   Serial.println("Initializing time...");
@@ -220,7 +249,38 @@ void setup() {
 }
 
 void loop() {
+  if (wifiStarted && WiFi.status() != WL_CONNECTED) {
+    unsigned long now = millis();
+    if (now - lastReconnectAttemptMs > 5000) {
+      lastReconnectAttemptMs = now;
+      Serial.print("WiFi dropped, status=");
+      Serial.println(wifiStatusToString(WiFi.status()));
+      Serial.println("Attempting reconnect...");
+      WiFi.reconnect();
+    }
+  }
+
   // Handle OTA updates
   ArduinoOTA.handle();
   delay(10);
+}
+
+static esp_err_t initCameraWithFallback(camera_config_t *config) {
+  esp_err_t err = esp_camera_init(config);
+  if (err == ESP_OK) {
+    return err;
+  }
+
+  if (err != ESP_ERR_NOT_SUPPORTED || config->pixel_format != PIXFORMAT_JPEG) {
+    return err;
+  }
+
+  Serial.println("Native JPEG is not supported on this sensor. Retrying with RGB565.");
+  config->pixel_format = PIXFORMAT_RGB565;
+  config->frame_size = psramFound() ? FRAMESIZE_SVGA : FRAMESIZE_QVGA;
+  config->fb_count = 1;
+  config->grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+  config->fb_location = psramFound() ? CAMERA_FB_IN_PSRAM : CAMERA_FB_IN_DRAM;
+
+  return esp_camera_init(config);
 }

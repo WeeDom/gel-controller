@@ -3,17 +3,13 @@ import requests
 import socket
 import os
 import ipaddress
+import time
 from contextlib import contextmanager
 from gel_controller.camera_auth import signed_url_and_headers
 
 HTTP_PORTS = [80, 8080]  # Common ESP32-CAM ports
 TIMEOUT = 1.0
-
-
-def require_root() -> None:
-    """Require root privileges for network discovery scans."""
-    if os.geteuid() != 0:
-        raise PermissionError("Camera discovery must run as root (required for nmap host discovery).")
+PROBE_RETRIES = 3
 
 
 def detect_local_subnet_24() -> str:
@@ -77,7 +73,6 @@ def reduced_privileges_when_possible():
 
 def scan_subnet():
     """Fast scan for live IPs on local subnet"""
-    require_root()
     subnet = detect_local_subnet_24()
     print(f"Scanning {subnet}...")
     result = subprocess.run(
@@ -97,37 +92,72 @@ def scan_subnet():
     return ips
 
 
-def port_open(ip, port, timeout=TIMEOUT):
-    """Check if TCP port is open"""
-    try:
-        with socket.create_connection((ip, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
-
-
-def is_gel_camera(ip, port):
-    """Check if device is a gel-camera by looking for custom header"""
+def read_camera_props(ip, port):
+    """Fetch camera metadata from /props after a successful identity probe."""
     try:
         url, headers = signed_url_and_headers(
             base_url=f"http://{ip}:{port}",
-            path="/",
-            method="HEAD",
+            path="/props",
+            method="GET",
         )
-        response = requests.head(url, timeout=TIMEOUT, headers=headers)
-        print(f"    Response headers: {response.headers}")
-        # Check for our custom identification header
-        device_type = response.headers.get('X-Device-Type', '')
-        device_id = response.headers.get('X-Device-Id', '')
-        device_name = response.headers.get('X-Device-Name', '')
+        response = requests.get(url, timeout=TIMEOUT, headers=headers)
+        if response.status_code != 200:
+            return {}
+        data = response.json()
+        return data if isinstance(data, dict) else {}
+    except (requests.RequestException, ValueError):
+        return {}
 
-        if device_type == 'gel-camera':
-            return True, device_id, device_name
 
-    except requests.RequestException:
-        pass
+def probe_camera(ip, port):
+    """Probe for a GEL camera and return its metadata when identified."""
+    for attempt in range(PROBE_RETRIES):
+        try:
+            url, headers = signed_url_and_headers(
+                base_url=f"http://{ip}:{port}",
+                path="/",
+                method="HEAD",
+            )
+            response = requests.head(url, timeout=TIMEOUT, headers=headers)
 
-    return False, None, None
+            # Check for our custom identification header.
+            device_type = response.headers.get("X-Device-Type", "")
+            if device_type != "gel-camera":
+                return None
+
+            props = read_camera_props(ip, port)
+            device_id = response.headers.get("X-Device-ID", "")
+            device_name = props.get("name") or response.headers.get("X-Device-Name", f"camera-{ip}")
+            room_id = props.get("room_id") or response.headers.get("X-Room-ID", "unknown")
+            cam_mode = props.get("cam_mode") or response.headers.get("X-Cam-Mode", "room")
+            location = props.get("location", "unknown")
+            poll_interval = props.get("poll_interval", 10.0)
+            try:
+                poll_interval = float(poll_interval)
+            except (TypeError, ValueError):
+                poll_interval = 10.0
+
+            return {
+                "ip": ip,
+                "port": port,
+                "mac": device_id,
+                "name": device_name,
+                "room_id": room_id,
+                "cam_mode": cam_mode,
+                "location": location,
+                "poll_interval": poll_interval,
+                "url": f"http://{ip}:{port}",
+                "stream_url": f"http://{ip}:81/stream",
+            }
+
+        except requests.RequestException:
+            pass
+
+        # Small backoff helps catch devices mid-boot after reset.
+        if attempt < PROBE_RETRIES - 1:
+            time.sleep(0.2)
+
+    return None
 
 
 def discover_cameras():
@@ -140,20 +170,13 @@ def discover_cameras():
             print(f"Checking {ip}...")
 
             for port in HTTP_PORTS:
-                if not port_open(ip, port):
-                    continue
-
-                is_camera, device_id, device_name = is_gel_camera(ip, port)
-                if is_camera:
-                    print(f"  ✓ Camera found! MAC: {device_id}, Name: {device_name}")
-                    cameras.append({
-                        "ip": ip,
-                        "port": port,
-                        "mac": device_id,
-                        "name": device_name,
-                        "url": f"http://{ip}:{port}",
-                        "stream_url": f"http://{ip}:{port}:81/stream"  # ESP32-CAM stream port
-                    })
+                camera = probe_camera(ip, port)
+                if camera:
+                    print(
+                        f"  ✓ Camera found! MAC: {camera['mac']}, Name: {camera['name']}, "
+                        f"Room: {camera['room_id']}, Mode: {camera['cam_mode']}"
+                    )
+                    cameras.append(camera)
                     break  # Found it, no need to check other ports
 
     return cameras

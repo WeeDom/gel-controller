@@ -3,6 +3,7 @@ Test suite for Room class - Room state management.
 """
 
 import pytest
+from unittest.mock import patch
 from gel_controller.camera_state import CameraStatus
 from gel_controller.room import Room
 from gel_controller.camera import Camera
@@ -95,6 +96,46 @@ class TestRoomCameraManagement:
         room.set_camera_inactive(camera)
 
         assert camera.status == CameraStatus.INACTIVE
+
+    def test_room_network_discovery_only_adds_matching_room_cameras(self):
+        """Discovery should only attach cameras assigned to this room."""
+        room = Room(room_id="room1", name="Test Room")
+
+        discovered = [
+            {
+                "name": "cam-room1",
+                "room_id": "room1",
+                "cam_mode": "room",
+                "location": "inside",
+                "poll_interval": 4.0,
+                "ip": "10.0.0.10",
+                "port": 80,
+                "mac": "aa:bb:cc:dd:ee:01",
+                "url": "http://10.0.0.10:80",
+                "stream_url": "http://10.0.0.10:81/stream",
+            },
+            {
+                "name": "cam-room2",
+                "room_id": "room2",
+                "cam_mode": "door",
+                "location": "door",
+                "poll_interval": 5.0,
+                "ip": "10.0.0.11",
+                "port": 80,
+                "mac": "aa:bb:cc:dd:ee:02",
+                "url": "http://10.0.0.11:80",
+                "stream_url": "http://10.0.0.11:81/stream",
+            },
+        ]
+
+        with patch("gel_controller.room.discover_cameras", return_value=discovered):
+            cameras = room.get_cameras(search_network=True)
+
+        assert len(cameras) == 1
+        assert cameras[0].name == "cam-room1"
+        assert cameras[0].room_id == "room1"
+        assert cameras[0].cam_mode == "room"
+        assert cameras[0].poll_interval == 4.0
 
 
 class TestRoomPersonDetectorManagement:

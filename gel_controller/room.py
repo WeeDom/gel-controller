@@ -203,14 +203,28 @@ class Room:
             # scan network for espressif devices using nmap
             cameras = discover_cameras()
             for camera in cameras:
+                discovered_room_id = str(camera.get("room_id", "")).strip()
+                if not discovered_room_id or discovered_room_id == "unknown":
+                    logger.warning(
+                        "Skipping discovered camera %s at %s because room_id is unset",
+                        camera.get("name", "unknown"),
+                        camera.get("ip", "unknown"),
+                    )
+                    continue
+                if discovered_room_id != self.room_id:
+                    continue
+
                 discovered_camera = Camera(
-                    room_id=self.room_id,
+                    room_id=discovered_room_id,
                     name=camera["name"],
                     ip=camera["ip"],
                     port=camera["port"],
                     mac=camera["mac"],
                     url=camera["url"],
                     stream_url=camera["stream_url"],
+                    poll_interval=float(camera.get("poll_interval", 10.0)),
+                    cam_mode=str(camera.get("cam_mode", "room")),
+                    location=str(camera.get("location", "unknown")),
                 )
                 self.add_camera(discovered_camera)
         return self._cameras.copy()

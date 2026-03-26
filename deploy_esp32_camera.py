@@ -2,6 +2,7 @@
 import argparse
 import ipaddress
 import json
+import re
 import subprocess
 import sys
 import time
@@ -11,6 +12,18 @@ import urllib.request
 from urllib.parse import urlparse
 from pathlib import Path
 from gel_controller.camera_auth import signed_url_and_headers
+from gel_controller.devices.camera import discover_cameras
+
+CAM_MODE_ALIASES = {
+    "room": "room",
+    "room_cam": "room",
+    "room-camera": "room",
+    "door": "door",
+    "doorway": "door",
+    "door_cam": "door",
+    "door-camera": "door",
+    "unknown": "room",
+}
 
 
 def is_ip_address(value: str) -> bool:
@@ -65,6 +78,16 @@ def run_command(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
 
 
+def run_command_capture(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    print("+", " ".join(cmd))
+    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+    if result.stdout:
+        print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+    if result.stderr:
+        print(result.stderr, end="" if result.stderr.endswith("\n") else "\n", file=sys.stderr)
+    return result
+
+
 def run_command_with_retries(cmd: list[str], retries: int, delay_seconds: float) -> None:
     attempts = max(1, retries)
     for attempt in range(1, attempts + 1):
@@ -76,6 +99,30 @@ def run_command_with_retries(cmd: list[str], retries: int, delay_seconds: float)
                 raise
             print(f"Upload failed (attempt {attempt}/{attempts}); retrying in {delay_seconds:.1f}s...")
             time.sleep(delay_seconds)
+
+
+def run_command_with_retries_capture(cmd: list[str], retries: int, delay_seconds: float) -> subprocess.CompletedProcess[str]:
+    attempts = max(1, retries)
+    for attempt in range(1, attempts + 1):
+        try:
+            return run_command_capture(cmd)
+        except subprocess.CalledProcessError:
+            if attempt >= attempts:
+                raise
+            print(f"Upload failed (attempt {attempt}/{attempts}); retrying in {delay_seconds:.1f}s...")
+            time.sleep(delay_seconds)
+
+    raise RuntimeError("Unreachable retry state")
+
+
+def normalize_cam_mode(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = CAM_MODE_ALIASES.get(value.strip().lower())
+    if normalized is None:
+        valid = ", ".join(sorted(set(CAM_MODE_ALIASES.values())))
+        raise ValueError(f"Unsupported --cam-mode '{value}'. Expected one of: {valid}")
+    return normalized
 
 
 def wait_for_http_ready(device_ip: str, retries: int, delay_seconds: float, timeout: float) -> None:
@@ -106,6 +153,83 @@ def wait_for_http_ready(device_ip: str, retries: int, delay_seconds: float, time
     raise RuntimeError(f"Camera HTTP not ready at {status_url} after {attempts} attempts")
 
 
+def camera_identity(camera: dict) -> str:
+    mac = str(camera.get("mac", "")).strip().lower()
+    if mac:
+        return f"mac:{mac}"
+    ip = str(camera.get("ip", "")).strip()
+    if ip:
+        return f"ip:{ip}"
+    return ""
+
+
+def auto_discover_device_ip(
+    retries: int,
+    delay_seconds: float,
+    known_camera_keys: set[str] | None = None,
+    expected_mac: str | None = None,
+) -> str:
+    attempts = max(1, retries)
+    known_camera_keys = known_camera_keys or set()
+    expected_mac = expected_mac.strip().lower() if expected_mac else None
+
+    for attempt in range(1, attempts + 1):
+        cameras = discover_cameras()
+        if cameras:
+            if expected_mac:
+                for camera in cameras:
+                    mac = str(camera.get("mac", "")).strip().lower()
+                    if mac == expected_mac:
+                        ip = str(camera.get("ip", "")).strip()
+                        if ip:
+                            print(f"Auto-discovered flashed camera by MAC at {ip}")
+                            return ip
+
+                visible_summary = ", ".join(
+                    f"{camera.get('name', 'unknown')}@{camera.get('ip', '?')}[{camera.get('mac', '?')}]"
+                    for camera in cameras
+                )
+                if attempt >= attempts:
+                    raise RuntimeError(
+                        "Could not find the flashed camera on the LAN after upload. "
+                        f"Expected MAC {expected_mac}, visible cameras: {visible_summary or 'none'}"
+                    )
+
+                time.sleep(delay_seconds)
+                continue
+
+            new_cameras = [camera for camera in cameras if camera_identity(camera) not in known_camera_keys]
+            candidates = new_cameras or cameras
+
+            if len(candidates) == 1:
+                ip = str(candidates[0].get("ip", "")).strip()
+                if ip:
+                    print(f"Auto-discovered camera at {ip}")
+                    return ip
+
+            candidate_summary = ", ".join(
+                f"{camera.get('name', 'unknown')}@{camera.get('ip', '?')}"
+                for camera in candidates
+            )
+            if attempt >= attempts:
+                raise RuntimeError(
+                    "Could not uniquely identify camera IP after upload. "
+                    f"Candidates: {candidate_summary or 'none'}"
+                )
+
+        if attempt < attempts:
+            time.sleep(delay_seconds)
+
+    raise RuntimeError("Could not auto-discover camera IP after upload")
+
+
+def extract_mac_from_upload_output(output: str) -> str | None:
+    match = re.search(r"\bMAC:\s*([0-9A-Fa-f:]{17})\b", output)
+    if not match:
+        return None
+    return match.group(1).lower()
+
+
 def read_props(device_ip: str, timeout: float) -> dict:
     url, headers = signed_url_and_headers(
         base_url=f"http://{device_ip}",
@@ -124,14 +248,24 @@ def read_props(device_ip: str, timeout: float) -> dict:
     return {}
 
 
-def post_props(device_ip: str, name: str, room_id: str, location: str, poll_interval: float, timeout: float) -> None:
-    # Keep exact key ordering and compact JSON to match simple firmware parser.
-    safe_name = name.replace('"', "'")
-    safe_room_id = room_id.replace('"', "'")
-    safe_location = location.replace('"', "'")
-    payload = (
-        '{"name":"%s","room_id":"%s","location":"%s","poll_interval":%.1f}'
-        % (safe_name, safe_room_id, safe_location, poll_interval)
+def post_props(
+    device_ip: str,
+    name: str,
+    room_id: str,
+    location: str,
+    cam_mode: str,
+    poll_interval: float,
+    timeout: float,
+) -> None:
+    payload = json.dumps(
+        {
+            "name": name.replace('"', "'"),
+            "room_id": room_id.replace('"', "'"),
+            "location": location.replace('"', "'"),
+            "cam_mode": cam_mode.replace('"', "'"),
+            "poll_interval": poll_interval,
+        },
+        separators=(",", ":"),
     )
 
     url, headers = signed_url_and_headers(
@@ -156,6 +290,41 @@ def post_props(device_ip: str, name: str, room_id: str, location: str, poll_inte
         raise RuntimeError(f"HTTP {exc.code} while setting props: {detail}") from exc
     except Exception as exc:
         raise RuntimeError(f"Failed to set props on {device_ip}: {exc}") from exc
+
+
+def verify_props(
+    device_ip: str,
+    expected_name: str,
+    expected_room_id: str,
+    expected_location: str,
+    expected_cam_mode: str,
+    expected_poll_interval: float,
+    timeout: float,
+) -> None:
+    current = read_props(device_ip, timeout)
+    mismatches = []
+
+    if str(current.get("name", "")) != expected_name:
+        mismatches.append(f"name={current.get('name')!r}")
+    if str(current.get("room_id", "")) != expected_room_id:
+        mismatches.append(f"room_id={current.get('room_id')!r}")
+    if str(current.get("location", "")) != expected_location:
+        mismatches.append(f"location={current.get('location')!r}")
+    if str(current.get("cam_mode", "")) != expected_cam_mode:
+        mismatches.append(f"cam_mode={current.get('cam_mode')!r}")
+
+    try:
+        current_poll = float(current.get("poll_interval"))
+    except (TypeError, ValueError):
+        current_poll = None
+    if current_poll is None or abs(current_poll - expected_poll_interval) > 0.05:
+        mismatches.append(f"poll_interval={current.get('poll_interval')!r}")
+
+    if mismatches:
+        raise RuntimeError(
+            f"Camera at {device_ip} did not persist the requested props. "
+            f"Mismatched values: {', '.join(mismatches)}"
+        )
 
 
 def main() -> int:
@@ -189,6 +358,10 @@ def main() -> int:
     parser.add_argument("--camera-name", help="Camera name to set in /props")
     parser.add_argument("--room-id", help="Room ID to set in /props")
     parser.add_argument("--location", help="Location to set in /props")
+    parser.add_argument(
+        "--cam-mode",
+        help="Camera mode to set in /props (`room` or `door`)",
+    )
     parser.add_argument("--poll-interval", type=float, help="Poll interval to set in /props")
     parser.add_argument("--http-timeout", type=float, default=5.0, help="HTTP timeout in seconds")
     parser.add_argument("--http-retries", type=int, default=12, help="HTTP readiness/config retry attempts")
@@ -218,6 +391,28 @@ def main() -> int:
         ]
         run_command(compile_cmd)
 
+    known_camera_keys: set[str] = set()
+    should_auto_discover_ip = (
+        not args.no_config
+        and not args.device_ip
+        and bool(args.port)
+        and not is_network_target(args.port)
+    )
+
+    if should_auto_discover_ip:
+        try:
+            known_camera_keys = {
+                identity
+                for camera in discover_cameras()
+                if (identity := camera_identity(camera))
+            }
+            if known_camera_keys:
+                print(f"Found {len(known_camera_keys)} existing camera(s) before upload")
+        except Exception as exc:
+            print(f"Warning: pre-upload camera discovery failed: {exc}")
+
+    flashed_device_mac: str | None = None
+
     if not args.no_upload:
         if not args.port:
             print("--port is required unless --no-upload is used", file=sys.stderr)
@@ -246,7 +441,10 @@ def main() -> int:
 
         if is_network_target(args.port) and not upload_protocol:
             print("Info: using network upload without explicit --protocol (more reliable for ESP32 OTA).")
-        run_command_with_retries(upload_cmd, args.upload_retries, args.retry_delay)
+        upload_result = run_command_with_retries_capture(upload_cmd, args.upload_retries, args.retry_delay)
+        flashed_device_mac = extract_mac_from_upload_output((upload_result.stdout or "") + "\n" + (upload_result.stderr or ""))
+        if flashed_device_mac:
+            print(f"Flashed device MAC: {flashed_device_mac}")
 
     if not args.no_config:
         device_ip = normalize_host_like(args.device_ip) if args.device_ip else None
@@ -255,8 +453,13 @@ def main() -> int:
             device_ip = normalized_port
 
         if not device_ip:
-            print("Skipping /props config: no --device-ip provided and --port is not an IP")
-            return 0
+            print("No camera IP provided; attempting LAN auto-discovery...")
+            device_ip = auto_discover_device_ip(
+                retries=args.http_retries,
+                delay_seconds=args.http_retry_delay,
+                known_camera_keys=known_camera_keys,
+                expected_mac=flashed_device_mac,
+            )
 
         print(f"Waiting for camera HTTP to become ready at {device_ip}...")
         wait_for_http_ready(
@@ -270,13 +473,25 @@ def main() -> int:
         name = args.camera_name if args.camera_name is not None else str(current.get("name", "cam1"))
         room_id = args.room_id if args.room_id is not None else str(current.get("room_id", "unknown"))
         location = args.location if args.location is not None else str(current.get("location", "unknown"))
+        current_cam_mode = normalize_cam_mode(str(current.get("cam_mode", "room")))
+        cam_mode = normalize_cam_mode(args.cam_mode) if args.cam_mode is not None else current_cam_mode
         poll_interval = args.poll_interval if args.poll_interval is not None else float(current.get("poll_interval", 10.0))
 
-        post_props(device_ip, name, room_id, location, poll_interval, args.http_timeout)
+        post_props(device_ip, name, room_id, location, cam_mode or "room", poll_interval, args.http_timeout)
+        verify_props(device_ip, name, room_id, location, cam_mode or "room", poll_interval, args.http_timeout)
 
     print("Done")
     return 0
 
 
 if __name__ == "__main__":
+    print("""
+ESP32 Camera Deployment Script
+
+This script compiles and uploads ESP32 camera firmware using arduino-cli, then configures camera metadata over HTTP.
+
+Bricked the device? Plugged it into the USB port?
+
+Change --port to the serial port (probably /dev/ttyUSB0 or COM3)
+""")
     sys.exit(main())
