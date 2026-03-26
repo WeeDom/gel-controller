@@ -10,12 +10,6 @@ HTTP_PORTS = [80, 8080]  # Common ESP32-CAM ports
 TIMEOUT = 1.0
 
 
-def require_root() -> None:
-    """Require root privileges for network discovery scans."""
-    if os.geteuid() != 0:
-        raise PermissionError("Camera discovery must run as root (required for nmap host discovery).")
-
-
 def detect_local_subnet_24() -> str:
     """Detect active local interface subnet and return /24 network to scan."""
     try:
@@ -77,7 +71,6 @@ def reduced_privileges_when_possible():
 
 def scan_subnet():
     """Fast scan for live IPs on local subnet"""
-    require_root()
     subnet = detect_local_subnet_24()
     print(f"Scanning {subnet}...")
     result = subprocess.run(

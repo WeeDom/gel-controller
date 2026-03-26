@@ -24,7 +24,6 @@ KNOWN_SENSORS = [
 
 def scan_subnet():
     """Fast scan for live IPs on local subnet"""
-    require_root()
     subnet = detect_local_subnet_24()
     print(f"Scanning {subnet}...")
     result = subprocess.run(
@@ -46,12 +45,6 @@ def scan_subnet():
             current_ip = None
 
     return devices
-
-
-def require_root() -> None:
-    """Require root privileges for network discovery scans."""
-    if os.geteuid() != 0:
-        raise PermissionError("Presence sensor discovery must run as root (required for nmap host discovery).")
 
 
 def detect_local_subnet_24() -> str:

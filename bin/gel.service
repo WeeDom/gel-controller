@@ -1,0 +1,17 @@
+[Unit]
+Description=GEL Controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gel
+WorkingDirectory=/home/gel/gel-controller
+ExecStart=/home/gel/gel-controller/venv/bin/python gel.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

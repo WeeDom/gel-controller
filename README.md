@@ -39,18 +39,20 @@ pip install -r requirements.txt
 
 ### Run the detector
 
+Check which devices are available. If anything is missing, check hardware etc.
+
 ```bash
-./detect_person.py
+sudo ./discover_devices.py
 ```
 
 Or:
 
 ```bash
-python3 detect_person.py
+sudo $(which python) discover+devices.py
 ```
 
 The script will:
-1. Discover ESPHome devices on the network (looking for "seeed" devices)
+1. Discover our devices on the local lan (it does this intelligently by looking at the local subnet /24 cidr)
 2. Resolve the device IP address
 3. Connect to the device and monitor heartbeat data
 4. Output occupancy status changes

@@ -23,7 +23,7 @@ def discover_all_devices():
     print("\n🚶 PRESENCE SENSORS")
     print("-"*60)
     sensors = discover_presence_sensors()
-
+ 
     # Summary
     print("\n" + "="*60)
     print("DISCOVERY SUMMARY")
