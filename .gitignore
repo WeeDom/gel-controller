@@ -6,6 +6,7 @@ __pycache__
 ## esp noise
 .arduino-build/
 esp32cam/CameraWebServer/build/
+esp32light/breakbeam/build/
 .esphome
 ## vscode stuff
 .vscode
