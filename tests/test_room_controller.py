@@ -262,6 +262,34 @@ class TestBaselineCapturePersistence:
         assert row[2] == "Test Room"
 
 
+class TestStatusLogPayloads:
+    """Test status payload includes separate debug and incident log streams."""
+
+    def test_get_status_reads_json_debug_and_incident_logs(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        logs_dir = tmp_path / "logs"
+        logs_dir.mkdir()
+        (logs_dir / "gel-debug-20260328_120000.jsonl").write_text(
+            '{"timestamp":"2026-03-28T12:00:00+00:00","logger":"gel.test","level":"INFO","message":"Heartbeat sensor update","incident":false,"event_type":"heartbeat"}\n'
+            '{"timestamp":"2026-03-28T12:00:01+00:00","logger":"gel.test","level":"INFO","message":"Room became occupied","incident":true,"event_type":"room_occupied","room_id":"101"}\n',
+            encoding="utf-8",
+        )
+        (logs_dir / "gel-incidents-20260328_120000.jsonl").write_text(
+            '{"timestamp":"2026-03-28T12:00:01+00:00","logger":"gel.test","level":"INFO","message":"Room became occupied","incident":true,"event_type":"room_occupied","room_id":"101"}\n',
+            encoding="utf-8",
+        )
+
+        controller = RoomController()
+
+        payload = controller.get_status(include_logs=True, log_lines=10)
+
+        assert payload["recent_log_lines"][0].endswith("Heartbeat sensor update")
+        assert payload["recent_log_lines"][1].endswith("Room became occupied")
+        assert payload["recent_incident_lines"] == [payload["recent_log_lines"][1]]
+        assert payload["recent_logs"][0]["event_type"] == "heartbeat"
+        assert payload["recent_incidents"][0]["event_type"] == "room_occupied"
+
+
 class TestDetectorReconnect:
     """Test detector reconnect behavior after transient failures."""
 

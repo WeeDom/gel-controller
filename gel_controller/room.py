@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable, List, Optional
 from .devices.pir import discover_presence_sensors
 from .devices.camera import discover_cameras
+from .logging_utils import log_incident
 from .person_detector import PersonDetector
 from .camera import Camera
 
@@ -125,6 +126,15 @@ class Room:
 
         if old_state != state:
             logger.info(f"Room {self._name} state changed: {old_state} → {state}")
+            log_incident(
+                logger,
+                f"Room {self._name} state changed: {old_state} → {state}",
+                event_type=f"room_{state}",
+                room_id=self._room_id,
+                room_name=self._name,
+                old_state=old_state,
+                new_state=state,
+            )
 
             # Handle state transitions
             if state == "empty" and old_state == "occupied":

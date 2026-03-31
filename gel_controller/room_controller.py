@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import List, Dict, TYPE_CHECKING, Optional
 import logging
 from .control_api import ControlAPIServer
+from .logging_utils import log_incident
 
 _CAPTURE_RE = re.compile(
     r'^capture-(?P<room_id>[^-]+)-(?P<camera_name>.+)-(?P<timestamp>\d{8}_\d{6}(?:_\d+)?)\.jpe?g$',
@@ -277,6 +278,16 @@ class RoomController:
         room._current_cycle_id = cycle_id
         room._current_event_number = event_number
         logger.info(f"Opened occupancy cycle {cycle_id} (event #{event_number}) for room {room.room_id}")
+        log_incident(
+            logger,
+            f"Opened occupancy cycle {cycle_id} (event #{event_number}) for room {room.room_id}",
+            event_type="occupancy_cycle_opened",
+            room_id=room.room_id,
+            room_name=room.name,
+            cycle_id=cycle_id,
+            event_number=event_number,
+            vacated_at=vacated_at,
+        )
 
     def _record_cycle_captures(self, cycle_id: str, captured_files: List[Path]) -> None:
         """Record capture filenames against an occupancy cycle."""
@@ -291,6 +302,15 @@ class RoomController:
                 )
             conn.commit()
         logger.info(f"Recorded {len(captured_files)} capture(s) for cycle {cycle_id}")
+        log_incident(
+            logger,
+            f"Recorded {len(captured_files)} capture(s) for cycle {cycle_id}",
+            event_type="occupancy_cycle_captures_recorded",
+            cycle_id=cycle_id,
+            captures=len(captured_files),
+            captured_at=captured_at,
+            filenames=[path.name for path in captured_files],
+        )
 
     def analyze_latest(self, room_id: Optional[str] = None) -> Dict[str, object]:
         """Queue spot-the-diff for the latest capture image(s)."""
@@ -395,17 +415,22 @@ class RoomController:
         }
 
         if include_logs:
-            payload["recent_log_lines"] = self._tail_latest_log(lines=log_lines)
+            recent_logs = self._tail_json_log("gel-debug-*.jsonl", lines=log_lines)
+            recent_incidents = self._tail_json_log("gel-incidents-*.jsonl", lines=log_lines)
+            payload["recent_logs"] = recent_logs
+            payload["recent_log_lines"] = [self._format_log_entry(entry) for entry in recent_logs]
+            payload["recent_incidents"] = recent_incidents
+            payload["recent_incident_lines"] = [self._format_log_entry(entry) for entry in recent_incidents]
 
         return payload
 
-    def _tail_latest_log(self, lines: int = 80) -> List[str]:
-        """Return trailing lines from the newest gel log file."""
+    def _tail_json_log(self, pattern: str, lines: int = 80) -> List[Dict[str, object]]:
+        """Return trailing JSON log entries from the newest matching log file."""
         log_dir = Path("logs")
         if not log_dir.exists():
             return []
 
-        candidates = sorted(log_dir.glob("gel-*.log"), key=lambda p: p.stat().st_mtime)
+        candidates = sorted(log_dir.glob(pattern), key=lambda p: p.stat().st_mtime)
         if not candidates:
             return []
 
@@ -418,7 +443,33 @@ class RoomController:
 
         if lines <= 0:
             return []
-        return content[-lines:]
+        out: List[Dict[str, object]] = []
+        for line in content[-lines:]:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError:
+                parsed = {
+                    "timestamp": None,
+                    "level": "INFO",
+                    "logger": __name__,
+                    "message": line,
+                    "incident": False,
+                    "event_type": None,
+                }
+            if isinstance(parsed, dict):
+                out.append(parsed)
+        return out
+
+    def _format_log_entry(self, entry: Dict[str, object]) -> str:
+        """Render a structured log entry to a compact line for existing UI consumers."""
+        ts = str(entry.get("timestamp") or "").replace("T", " ")
+        level = str(entry.get("level") or "INFO")
+        logger_name = str(entry.get("logger") or "")
+        message = str(entry.get("message") or "")
+        return f"{ts} {level} {logger_name} {message}".strip()
 
     def _analyze_event(self, room: 'Room', event_number: Optional[int], captured_files: List[Path]) -> None:
         """Run spot-the-diff for all cameras in one occupancy event (one API call per file)."""
@@ -644,6 +695,15 @@ class RoomController:
         for room in matched_rooms:
             if beam_broken:
                 logger.info("🚨 Breakbeam %s: beam BROKEN → room %s occupied", sensor_id, room.room_id)
+                log_incident(
+                    logger,
+                    f"Breakbeam {sensor_id}: beam BROKEN → room {room.room_id} occupied",
+                    event_type="breakbeam_broken",
+                    room_id=room.room_id,
+                    room_name=room.name,
+                    sensor_id=sensor_id,
+                    beam_broken=True,
+                )
                 room.state = "occupied"
             else:
                 logger.info("✅ Breakbeam %s: beam CLEAR (room %s — no state change)", sensor_id, room.room_id)

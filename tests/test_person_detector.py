@@ -25,7 +25,7 @@ class TestPersonDetectorInitialization:
         assert detector.get_name() == "Detector 1"
         assert detector.get_host() == "192.168.1.189"
         assert detector.get_port() == 6053
-        assert detector.get_heartbeat_timeout() == 10  # default
+        assert detector.get_heartbeat_timeout() == 300.0  # default
 
 
 class TestPersonDetectorProperties:
@@ -112,9 +112,9 @@ class TestPersonDetectorHeartbeatTimeout:
     """Test heartbeat timeout logic."""
 
     def test_detector_heartbeat_timeout(self):
-        """10 second timeout works correctly."""
+        """Configured timeout transitions room to empty when exceeded."""
         room = Room(room_id="room1", name="Test Room")
-        detector = PersonDetector(name="Detector 1", host="192.168.1.189", port=6053)
+        detector = PersonDetector(name="Detector 1", host="192.168.1.189", port=6053, heartbeat_timeout=10.0)
         detector.set_room(room)
 
         # Set room occupied
