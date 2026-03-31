@@ -5,7 +5,6 @@ import signal
 import sys
 import logging
 from time import sleep
-from datetime import datetime
 from pathlib import Path
 
 
@@ -30,29 +29,19 @@ def _maybe_reexec_with_venv_python() -> None:
 _maybe_reexec_with_venv_python()
 
 from gel_controller import Room, RoomController
+from gel_controller.logging_utils import setup_logging
 from gel_controller.registration import ensure_registered
 
 # Create logs directory
 log_dir = Path("logs")
 log_dir.mkdir(exist_ok=True)
 
-# Generate log filename with timestamp
-log_file = log_dir / f"gel-{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-
-# Configure logging to both file and console
-logging.basicConfig(
-    level=logging.INFO,  # Capture everything
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
+log_files = setup_logging(log_dir)
 logger = logging.getLogger(__name__)
 
 """Room management for GEL Controller."""
 print("Maggie reporting for duty.\n")
-logger.info(f"📝 Logging to: {log_file}")
+logger.info("📝 Logging to: %s (incidents: %s)", log_files["debug_log"], log_files["incident_log"])
 
 ## one room to rule them all
 room_controller = RoomController()
