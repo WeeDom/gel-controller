@@ -10,6 +10,7 @@ esp32light/breakbeam/build/
 .esphome
 ## vscode stuff
 .vscode
+.codex
 ## don't vc images/logs
 .env
 captures/
