@@ -1,0 +1,9 @@
+{
+  "additionalFiles": "../..,../..,../..,../..",
+  "compiler.optimization_flags": "-Os",
+  "customBuildProperties": "",
+  "fqbn": "esp32:esp32:esp32cam:PartitionScheme=min_spiffs",
+  "hardwareFolders": "/home/weedom/.arduino15/packages/esp32/hardware/esp32/3.3.7,/home/weedom/.arduino15/packages/esp32/hardware/esp32/3.3.7",
+  "otherLibrariesFolders": "/home/weedom/Arduino/libraries",
+  "sketchLocation": "/home/weedom/gel-controller/esp32cam-door/DoorCamera"
+}

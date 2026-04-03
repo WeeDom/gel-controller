@@ -1,0 +1,8 @@
+# Arduino build artefacts
+*.ino.*
+*.bin
+*.elf
+*.hex
+*.map
+.build/
+
