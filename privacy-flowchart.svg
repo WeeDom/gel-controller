@@ -1,0 +1,731 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="1400"
+   height="1700"
+   viewBox="0 0 1400 1700"
+   role="img"
+   aria-labelledby="title desc"
+   version="1.1"
+   id="svg55"
+   sodipodi:docname="privacy-flowchart.svg"
+   inkscape:version="1.4.2 (ebf0e940d0, 2025-05-08)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <sodipodi:namedview
+     id="namedview55"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="0.53533333"
+     inkscape:cx="549.19054"
+     inkscape:cy="899.43961"
+     inkscape:window-width="1854"
+     inkscape:window-height="1011"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg55" />
+  <title
+     id="title">Guard-e-loo Privacy Logic Flowchart</title>
+  <desc
+     id="desc">Flowchart showing privacy-first occupancy detection and image capture logic using redundant PIR sensors and other presence sensors.</desc>
+  <defs
+     id="defs1">
+    <style
+       id="style1">
+      .bg { fill: #f7f4ec; }
+      .title { font: 700 28px Georgia, &quot;Times New Roman&quot;, serif; fill: #1d2a33; }
+      .subtitle { font: 400 15px Georgia, &quot;Times New Roman&quot;, serif; fill: #43535e; }
+      .box { fill: #fffdf8; stroke: #1d2a33; stroke-width: 2.2; rx: 18; ry: 18; }
+      .decision { fill: #fff8e8; stroke: #7a5c00; stroke-width: 2.2; }
+      .privacy { fill: #e8f3ee; stroke: #2f6b57; stroke-width: 2.2; rx: 18; ry: 18; }
+      .capture { fill: #edf4fb; stroke: #275b88; stroke-width: 2.2; rx: 18; ry: 18; }
+      .optional { fill: #f3edf8; stroke: #6c4a8d; stroke-width: 2.2; rx: 18; ry: 18; }
+      .warning { fill: #fbeaea; stroke: #9b2c2c; stroke-width: 2.2; rx: 18; ry: 18; }
+      .text { font: 15px Arial, Helvetica, sans-serif; fill: #162027; }
+      .small { font: 13px Arial, Helvetica, sans-serif; fill: #32424d; }
+      .label { font: 13px Arial, Helvetica, sans-serif; font-weight: 700; fill: #162027; }
+      .arrow { stroke: #31424d; stroke-width: 2.4; fill: none; marker-end: url(#arrowhead); }
+      .dash { stroke-dasharray: 8 6; }
+    </style>
+    <marker
+       id="arrowhead"
+       markerWidth="10"
+       markerHeight="7"
+       refX="8.5"
+       refY="3.5"
+       orient="auto">
+      <polygon
+         points="0 0, 10 3.5, 0 7"
+         fill="#31424d"
+         id="polygon1" />
+    </marker>
+    <marker
+       id="arrowhead-6"
+       markerWidth="10"
+       markerHeight="7"
+       refX="8.5"
+       refY="3.5"
+       orient="auto">
+      <polygon
+         points="10,3.5 0,7 0,0 "
+         fill="#31424d"
+         id="polygon1-7" />
+    </marker>
+  </defs>
+  <rect
+     class="bg"
+     x="0"
+     y="0"
+     width="1400"
+     height="1700"
+     id="rect1" />
+  <text
+     class="label"
+     x="588.92004"
+     y="538.56799"
+     id="text43-2"
+     style="font-style:normal;font-variant:normal;font-weight:700;font-stretch:normal;font-size:13px;line-height:normal;font-family:Arial, Helvetica, sans-serif;fill:#162027">No</text>
+  <line
+     class="arrow"
+     x1="552.7724"
+     y1="497.32004"
+     x2="552.7724"
+     y2="557.32007"
+     id="line43-3"
+     style="fill:none;stroke:#31424d;stroke-width:2.4;marker-end:url(#arrowhead-6)" />
+  <text
+     class="title"
+     x="550"
+     y="56"
+     text-anchor="middle"
+     id="text1">Guard-e-loo Privacy Logic</text>
+  <text
+     class="subtitle"
+     x="550"
+     y="84"
+     text-anchor="middle"
+     id="text2">Privacy-first occupancy detection with redundant PIR sensors</text>
+  <rect
+     class="box"
+     x="385"
+     y="120"
+     width="330"
+     height="64"
+     id="rect2" />
+  <text
+     class="text"
+     x="550"
+     y="149"
+     text-anchor="middle"
+     id="text3">Start / system idle</text>
+  <text
+     class="small"
+     x="550"
+     y="170"
+     text-anchor="middle"
+     id="text4">Await occupancy and event triggers</text>
+  <rect
+     class="box"
+     x="345"
+     y="230"
+     width="410"
+     height="78"
+     id="rect4" />
+  <text
+     class="text"
+     x="550"
+     y="262"
+     text-anchor="middle"
+     id="text5">Monitor non-visual occupancy sensors</text>
+  <text
+     class="small"
+     x="550"
+     y="284"
+     text-anchor="middle"
+     id="text6">Multiple PIRs per room, plus mmWave or equivalent presence sensing</text>
+  <polygon
+     class="decision"
+     points="550,350 710,430 550,510 390,430"
+     id="polygon6" />
+  <text
+     class="text"
+     x="550"
+     y="418"
+     text-anchor="middle"
+     id="text7">Any PIR detects</text>
+  <text
+     class="text"
+     x="550"
+     y="440"
+     text-anchor="middle"
+     id="text8">motion?</text>
+  <rect
+     class="privacy"
+     x="120"
+     y="390"
+     width="200"
+     height="78"
+     id="rect8" />
+  <text
+     class="text"
+     x="220"
+     y="422"
+     text-anchor="middle"
+     id="text9">Room = occupied</text>
+  <text
+     class="small"
+     x="220"
+     y="444"
+     text-anchor="middle"
+     id="text10">Any PIR hit is enough</text>
+  <polygon
+     class="decision"
+     points="550,560 730,645 550,730 370,645"
+     id="polygon10" />
+  <text
+     class="text"
+     x="550"
+     y="633"
+     text-anchor="middle"
+     id="text11">mmWave or other presence</text>
+  <text
+     class="text"
+     x="550"
+     y="655"
+     text-anchor="middle"
+     id="text12">sensor indicates occupancy?</text>
+  <polygon
+     class="decision"
+     points="550,790 760,880 550,970 340,880"
+     id="polygon12" />
+  <text
+     class="text"
+     x="550"
+     y="868"
+     text-anchor="middle"
+     id="text13">Readings unclear, conflicting,</text>
+  <text
+     class="text"
+     x="550"
+     y="890"
+     text-anchor="middle"
+     id="text14">or unavailable?</text>
+  <rect
+     class="privacy"
+     x="120"
+     y="840"
+     width="210"
+     height="82"
+     id="rect14" />
+  <text
+     class="text"
+     x="225"
+     y="872"
+     text-anchor="middle"
+     id="text15">Fail-safe: treat room</text>
+  <text
+     class="text"
+     x="225"
+     y="894"
+     text-anchor="middle"
+     id="text16">as occupied</text>
+  <rect
+     class="box"
+     x="410"
+     y="1010"
+     width="280"
+     height="70"
+     id="rect16" />
+  <text
+     class="text"
+     x="550"
+     y="1041"
+     text-anchor="middle"
+     id="text17">Room tentatively empty</text>
+  <text
+     class="small"
+     x="550"
+     y="1063"
+     text-anchor="middle"
+     id="text18">Begin clearance checks</text>
+  <rect
+     class="box"
+     x="410"
+     y="1120"
+     width="280"
+     height="70"
+     id="rect18" />
+  <text
+     class="text"
+     x="550"
+     y="1151"
+     text-anchor="middle"
+     id="text19">Start settling period</text>
+  <text
+     class="small"
+     x="550"
+     y="1173"
+     text-anchor="middle"
+     id="text20">Require all sensors to remain clear</text>
+  <polygon
+     class="decision"
+     points="550,1240 760,1330 550,1420 340,1330"
+     id="polygon20" />
+  <text
+     class="text"
+     x="550"
+     y="1318"
+     text-anchor="middle"
+     id="text21">All sensors remain clear for</text>
+  <text
+     class="text"
+     x="550"
+     y="1340"
+     text-anchor="middle"
+     id="text22">the full settling period?</text>
+  <rect
+     class="privacy"
+     x="89.339973"
+     y="1135.9402"
+     width="240"
+     height="78"
+     id="rect22" />
+  <text
+     class="text"
+     x="205.60399"
+     y="1177.2802"
+     text-anchor="middle"
+     id="text23"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:15px;line-height:normal;font-family:Arial, Helvetica, sans-serif">Return to privacy mode</text>
+  <text
+     class="small"
+     x="200"
+     y="1274"
+     text-anchor="middle"
+     id="text24">Uncertainty blocks imaging</text>
+  <rect
+     class="capture"
+     x="785"
+     y="1288"
+     width="235"
+     height="78"
+     id="rect24" />
+  <text
+     class="text"
+     x="902"
+     y="1320"
+     text-anchor="middle"
+     id="text25">Permit single internal image</text>
+  <text
+     class="small"
+     x="902"
+     y="1342"
+     text-anchor="middle"
+     id="text26">Only after confirmed emptiness</text>
+  <rect
+     class="capture"
+     x="785"
+     y="1400"
+     width="235"
+     height="78"
+     id="rect26" />
+  <text
+     class="text"
+     x="902"
+     y="1432"
+     text-anchor="middle"
+     id="text27">Secure storage and limited use</text>
+  <text
+     class="small"
+     x="902"
+     y="1454"
+     text-anchor="middle"
+     id="text28">Damage, vandalism, flooding, misuse</text>
+  <rect
+     class="privacy"
+     x="20.168119"
+     y="560"
+     width="310"
+     height="96"
+     id="rect28" />
+  <text
+     class="text"
+     x="173.30013"
+     y="601.604"
+     text-anchor="middle"
+     id="text29"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:15px;line-height:normal;font-family:Arial, Helvetica, sans-serif">Block internal imaging</text>
+  <text
+     class="small"
+     x="195.98036"
+     y="566.54877"
+     text-anchor="middle"
+     id="text30"
+     transform="scale(0.90831504,1.1009396)"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:13px;line-height:normal;font-family:Arial, Helvetica, sans-serif;stroke-width:0.908315">If occupied, possibly occupied, or sensor state is uncertain</text>
+  <text
+     class="small"
+     x="180"
+     y="642"
+     text-anchor="middle"
+     id="text31"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:13px;line-height:normal;font-family:Arial, Helvetica, sans-serif">System stays in privacy mode</text>
+  <rect
+     class="optional"
+     x="785"
+     y="345"
+     width="250"
+     height="112"
+     id="rect31" />
+  <text
+     class="text"
+     x="910"
+     y="380"
+     text-anchor="middle"
+     id="text32">Optional separate path:</text>
+  <text
+     class="text"
+     x="910"
+     y="404"
+     text-anchor="middle"
+     id="text33">single entry still image</text>
+  <text
+     class="small"
+     x="910"
+     y="428"
+     text-anchor="middle"
+     id="text34">Event-triggered only, not continuous monitoring</text>
+  <rect
+     class="optional"
+     x="785"
+     y="500"
+     width="250"
+     height="88"
+     id="rect34" />
+  <text
+     class="text"
+     x="910"
+     y="534"
+     text-anchor="middle"
+     id="text35">Encrypt and store securely</text>
+  <text
+     class="small"
+     x="910"
+     y="558"
+     text-anchor="middle"
+     id="text36">Access only if incident review is required</text>
+  <line
+     class="arrow"
+     x1="550"
+     y1="184"
+     x2="550"
+     y2="230"
+     id="line36" />
+  <line
+     class="arrow"
+     x1="550"
+     y1="308"
+     x2="550"
+     y2="350"
+     id="line37" />
+  <line
+     class="arrow"
+     x1="390"
+     y1="430"
+     x2="320"
+     y2="430"
+     id="line38" />
+  <line
+     class="arrow"
+     x1="320"
+     y1="430"
+     x2="320"
+     y2="429"
+     id="line39" />
+  <text
+     class="label"
+     x="346"
+     y="418"
+     id="text40">Yes</text>
+  <line
+     class="arrow"
+     x1="220"
+     y1="468"
+     x2="220"
+     y2="560"
+     id="line41" />
+  <line
+     class="arrow"
+     x1="370"
+     y1="645"
+     x2="338.57391"
+     y2="645"
+     id="line42" />
+  <text
+     class="label"
+     x="413.51184"
+     y="606.84808"
+     id="text42"
+     style="font-style:normal;font-variant:normal;font-stretch:normal;font-size:13px;line-height:normal;font-family:Arial, Helvetica, sans-serif">Yes</text>
+  <line
+     class="arrow"
+     x1="550"
+     y1="730"
+     x2="550"
+     y2="790"
+     id="line43" />
+  <text
+     class="label"
+     x="566"
+     y="765"
+     id="text43">No</text>
+  <line
+     class="arrow"
+     x1="340"
+     y1="880"
+     x2="330"
+     y2="880"
+     id="line44" />
+  <line
+     class="arrow"
+     x1="330"
+     y1="880"
+     x2="330"
+     y2="881"
+     id="line45" />
+  <text
+     class="label"
+     x="382.01993"
+     y="838.11206"
+     id="text45"
+     style="font-style:normal;font-variant:normal;font-stretch:normal;font-size:13px;line-height:normal;font-family:Arial, Helvetica, sans-serif">Yes</text>
+  <line
+     class="arrow"
+     x1="550"
+     y1="970"
+     x2="550"
+     y2="1010"
+     id="line46" />
+  <text
+     class="label"
+     x="565"
+     y="994"
+     id="text46">No</text>
+  <line
+     class="arrow"
+     x1="221.26401"
+     y1="836.0722"
+     x2="221.26401"
+     y2="655.24103"
+     id="line47" />
+  <line
+     class="arrow"
+     x1="550"
+     y1="1080"
+     x2="550"
+     y2="1120"
+     id="line48" />
+  <line
+     class="arrow"
+     x1="550"
+     y1="1190"
+     x2="550"
+     y2="1240"
+     id="line49" />
+  <line
+     class="arrow"
+     x1="340"
+     y1="1330"
+     x2="320"
+     y2="1330"
+     id="line50" />
+  <line
+     class="arrow"
+     x1="320"
+     y1="1330"
+     x2="320"
+     y2="1213.8077"
+     id="line51" />
+  <text
+     class="label"
+     x="323.24408"
+     y="1288.1121"
+     id="text51"
+     style="font-style:normal;font-variant:normal;font-stretch:normal;font-size:13px;line-height:normal;font-family:Arial, Helvetica, sans-serif">No</text>
+  <line
+     class="arrow"
+     x1="760"
+     y1="1330"
+     x2="785"
+     y2="1330"
+     id="line52" />
+  <text
+     class="label"
+     x="739.33997"
+     y="1304.9241"
+     id="text52"
+     style="font-style:normal;font-variant:normal;font-stretch:normal;font-size:13px;line-height:normal;font-family:Arial, Helvetica, sans-serif">Yes</text>
+  <line
+     class="arrow"
+     x1="902"
+     y1="1366"
+     x2="902"
+     y2="1400"
+     id="line53" />
+  <line
+     class="arrow"
+     x1="1020"
+     y1="1439"
+     x2="1085"
+     y2="1439"
+     id="line53a" />
+  <polygon
+     class="decision"
+     points="1180,1348 1320,1438 1180,1528 1040,1438"
+     id="polygon53b" />
+  <text
+     class="text"
+     x="1180"
+     y="1426"
+     text-anchor="middle"
+     id="text53b1">AI detects a person</text>
+  <text
+     class="text"
+     x="1180"
+     y="1448"
+     text-anchor="middle"
+     id="text53b2">in any captured image?</text>
+  <text
+     class="label"
+     x="1206.7795"
+     y="1534.3438"
+     id="text53b3"
+     style="font-style:normal;font-variant:normal;font-stretch:normal;font-size:13px;line-height:normal;font-family:Arial, Helvetica, sans-serif">No</text>
+  <text
+     class="label"
+     x="1192.9962"
+     y="1325.1283"
+     id="text53b4"
+     style="font-style:normal;font-variant:normal;font-stretch:normal;font-size:13px;line-height:normal;font-family:Arial, Helvetica, sans-serif">Yes</text>
+  <rect
+     class="capture"
+     x="1035"
+     y="1560"
+     width="290"
+     height="76"
+     id="rect53c" />
+  <text
+     class="text"
+     x="1180"
+     y="1592"
+     text-anchor="middle"
+     id="text53c1">Store report / continue</text>
+  <text
+     class="small"
+     x="1180"
+     y="1614"
+     text-anchor="middle"
+     id="text53c2">Allowed only if no person is visible</text>
+  <line
+     class="arrow"
+     x1="1180"
+     y1="1528"
+     x2="1180"
+     y2="1560"
+     id="line53c" />
+  <rect
+     class="warning"
+     x="1035"
+     y="1188"
+     width="290"
+     height="86"
+     id="rect53d" />
+  <text
+     class="text"
+     x="1180"
+     y="1222"
+     text-anchor="middle"
+     id="text53d1">Return JSON refusal</text>
+  <text
+     class="small"
+     x="1180"
+     y="1244"
+     text-anchor="middle"
+     id="text53d2">Example: error / person_detected</text>
+  <line
+     class="arrow"
+     x1="1180"
+     y1="1348"
+     x2="1180"
+     y2="1274"
+     id="line53d" />
+  <rect
+     class="warning"
+     x="1035"
+     y="1068"
+     width="290"
+     height="86"
+     id="rect53e" />
+  <text
+     class="text"
+     x="1180"
+     y="1102"
+     text-anchor="middle"
+     id="text53e1">Delete all event images</text>
+  <text
+     class="small"
+     x="1180"
+     y="1124"
+     text-anchor="middle"
+     id="text53e2">Including in/egress images where possible</text>
+  <line
+     class="arrow"
+     x1="1180"
+     y1="1188"
+     x2="1180"
+     y2="1154"
+     id="line53e" />
+  <line
+     class="arrow dash"
+     x1="785"
+     y1="401"
+     x2="730"
+     y2="401"
+     id="line54" />
+  <line
+     class="arrow dash"
+     x1="910"
+     y1="457"
+     x2="910"
+     y2="500"
+     id="line55" />
+  <text
+     class="small"
+     x="80"
+     y="1490"
+     id="text55">Principle: if any sensor suggests occupancy, or if certainty is lost, imaging is blocked.</text>
+  <text
+     class="small"
+     x="80"
+     y="1515"
+     id="text56">Additional fail-closed rule: if AI detects a person, it must refuse in JSON and trigger deletion of the event image set.</text>
+  <metadata
+     id="metadata55">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:title>Guard-e-loo Privacy Logic Flowchart</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+</svg>
