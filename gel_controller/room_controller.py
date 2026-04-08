@@ -421,70 +421,75 @@ class RoomController:
         return content[-lines:]
 
     def _analyze_event(self, room: 'Room', event_number: Optional[int], captured_files: List[Path]) -> None:
-        """Run spot-the-diff for all cameras in one occupancy event (one API call per file)."""
+        """Run one composite spot-the-diff analysis for all cameras in one occupancy event."""
         try:
-            from spot_the_diff import analyze_changeset_file
+            from spot_the_diff import analyze_changeset_set
         except Exception as e:
             logger.error(f"Spot-the-diff unavailable: {e}")
             return
 
-        _VERDICT_RANK = {
-            "significant_change": 3,
-            "major_change": 3,
-            "minor_change": 2,
-            "uncertain": 1,
-            "no_change": 0,
-        }
-
-        all_per_camera: list = []
-        all_actions: list = []
-        worst_verdict = "no_change"
-        summaries: list = []
-
-        for path in captured_files:
-            try:
-                raw = analyze_changeset_file(
-                    changeset_path=path,
-                    room_id=room.room_id,
-                    captures_dir=Path("captures"),
-                    baseline_db=self._baseline_db_path,
-                    model=self._spot_diff_model,
-                )
-            except Exception as e:
-                logger.error(
-                    f"Spot-the-diff failed for {path.name} (event #{event_number} "
-                    f"room {room.room_id}): {e}"
-                )
-                continue
-
-            try:
-                parsed = json.loads(raw)
-            except Exception:
-                parsed = {}
-
-            verdict = parsed.get("overall_verdict", "uncertain")
-            if _VERDICT_RANK.get(verdict, 0) > _VERDICT_RANK.get(worst_verdict, 0):
-                worst_verdict = verdict
-
-            summary = parsed.get("summary", "")
-            if summary:
-                summaries.append(summary)
-
-            for pc in parsed.get("per_camera", []):
-                all_per_camera.append(pc)
-
-            all_actions.extend(parsed.get("recommended_actions", []))
-
-        if not all_per_camera and not summaries:
-            logger.warning(f"No spot-the-diff results produced for event #{event_number}")
+        try:
+            raw = analyze_changeset_set(
+                changeset_paths=list(captured_files),
+                room_id=room.room_id,
+                captures_dir=Path("captures"),
+                baseline_db=self._baseline_db_path,
+                model=self._spot_diff_model,
+            )
+        except Exception as e:
+            logger.error(
+                f"Spot-the-diff failed for event #{event_number} room {room.room_id}: {e}"
+            )
             return
 
-        combined = {
-            "overall_verdict": worst_verdict,
-            "summary": "; ".join(summaries) if summaries else "",
-            "per_camera": all_per_camera,
-            "recommended_actions": list(dict.fromkeys(all_actions)),  # deduplicate, preserve order
-        }
+        try:
+            combined = json.loads(raw)
+        except Exception:
+            logger.error(
+                "Spot-the-diff returned invalid JSON for event #%s room %s",
+                event_number,
+                room.room_id,
+            )
+            return
+
+        if not isinstance(combined, dict):
+            logger.error(
+                "Spot-the-diff returned non-object JSON for event #%s room %s",
+                event_number,
+                room.room_id,
+            )
+            return
+
+        if "summary" not in combined and isinstance(combined.get("full_report"), str):
+            combined["summary"] = combined["full_report"]
+
+        if not isinstance(combined.get("recommended_actions"), list):
+            combined["recommended_actions"] = []
+
+        if not isinstance(combined.get("changesets"), list):
+            combined["changesets"] = []
+
+        if not isinstance(combined.get("per_camera"), list):
+            combined["per_camera"] = [
+                {
+                    "camera_name": item.get("camera_name", ""),
+                    "room_id": item.get("room_id", room.room_id),
+                    "status": item.get("status", "uncertain"),
+                    "differences": item.get("differences", []),
+                    "confidence": item.get("confidence", 0.0),
+                    "baseline_file": item.get("baseline_file"),
+                    "capture_file": item.get("capture_file"),
+                }
+                for item in combined["changesets"]
+                if isinstance(item, dict)
+            ]
+
+        if combined.get("person_detected"):
+            logger.warning(
+                "Spot-the-diff processing stopped for event #%s room %s due to person detection",
+                event_number,
+                room.room_id,
+            )
 
         self._spot_diff_logs_dir.mkdir(parents=True, exist_ok=True)
         if event_number is not None:
