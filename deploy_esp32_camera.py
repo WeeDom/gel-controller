@@ -26,6 +26,13 @@ CAM_MODE_ALIASES = {
 }
 
 
+def infer_target_from_sketch(sketch_path: Path) -> str:
+    text = str(sketch_path).replace("\\", "/").lower()
+    if "esp32cam-door" in text or "doorcamera" in text:
+        return "door"
+    return "camera"
+
+
 def is_ip_address(value: str) -> bool:
     try:
         ipaddress.ip_address(value)
@@ -329,18 +336,24 @@ def verify_props(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Compile/upload ESP32 camera firmware and configure camera metadata over /props.",
+        description="Compile/upload ESP32 camera firmware for camera or door-camera targets.",
     )
     parser.add_argument("--arduino-cli", default="arduino-cli", help="Path to arduino-cli executable")
     parser.add_argument(
+        "--target",
+        choices=["auto", "camera", "door"],
+        default="auto",
+        help="Deployment profile: camera, door, or auto-detect from --sketch",
+    )
+    parser.add_argument(
         "--sketch",
-        default="esp32cam/CameraWebServer",
+        default=None,
         help="Path to sketch directory or .ino file",
     )
     parser.add_argument("--fqbn", default="esp32:esp32:esp32cam", help="Board FQBN")
     parser.add_argument(
         "--build-dir",
-        default=".arduino-build/esp32cam",
+        default=None,
         help="Output directory for compiled artifacts",
     )
     parser.add_argument("--port", help="Upload port (serial like /dev/ttyUSB0 or OTA IP)")
@@ -353,6 +366,12 @@ def main() -> int:
     parser.add_argument("--no-compile", action="store_true", help="Skip compile step")
     parser.add_argument("--no-upload", action="store_true", help="Skip upload step")
     parser.add_argument("--no-config", action="store_true", help="Skip /props configuration step")
+    parser.add_argument(
+        "--config-mode",
+        choices=["auto", "props", "none"],
+        default="auto",
+        help="Post-upload config behavior: auto (by target), props, or none",
+    )
 
     parser.add_argument("--device-ip", help="Device IP for /props configuration (defaults to --port if IP)")
     parser.add_argument("--camera-name", help="Camera name to set in /props")
@@ -369,8 +388,34 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    sketch_path = Path(args.sketch)
-    build_dir = Path(args.build_dir)
+    if args.sketch:
+        sketch_path = Path(args.sketch)
+    elif args.target == "door":
+        sketch_path = Path("esp32cam-door/DoorCamera")
+    else:
+        sketch_path = Path("esp32cam/CameraWebServer")
+
+    target = args.target if args.target != "auto" else infer_target_from_sketch(sketch_path)
+
+    if args.build_dir:
+        build_dir = Path(args.build_dir)
+    elif target == "door":
+        build_dir = Path(".arduino-build/esp32cam-door")
+    else:
+        build_dir = Path(".arduino-build/esp32cam")
+
+    if args.config_mode == "auto":
+        config_mode = "props" if target == "camera" else "none"
+    else:
+        config_mode = args.config_mode
+
+    if args.no_config:
+        config_mode = "none"
+
+    print(f"Target profile: {target}")
+    print(f"Sketch: {sketch_path}")
+    print(f"Build dir: {build_dir}")
+    print(f"Config mode: {config_mode}")
 
     if not sketch_path.exists():
         print(f"Sketch path not found: {sketch_path}", file=sys.stderr)
@@ -446,7 +491,7 @@ def main() -> int:
         if flashed_device_mac:
             print(f"Flashed device MAC: {flashed_device_mac}")
 
-    if not args.no_config:
+    if config_mode == "props":
         device_ip = normalize_host_like(args.device_ip) if args.device_ip else None
         normalized_port = normalize_host_like(args.port) if args.port else None
         if not device_ip and normalized_port and is_network_target(args.port):
@@ -476,7 +521,6 @@ def main() -> int:
         current_cam_mode = normalize_cam_mode(str(current.get("cam_mode", "room")))
         cam_mode = normalize_cam_mode(args.cam_mode) if args.cam_mode is not None else current_cam_mode
         poll_interval = args.poll_interval if args.poll_interval is not None else float(current.get("poll_interval", 10.0))
-
         post_props(device_ip, name, room_id, location, cam_mode or "room", poll_interval, args.http_timeout)
         verify_props(device_ip, name, room_id, location, cam_mode or "room", poll_interval, args.http_timeout)
 
