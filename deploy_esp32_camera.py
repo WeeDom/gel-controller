@@ -160,6 +160,47 @@ def wait_for_http_ready(device_ip: str, retries: int, delay_seconds: float, time
     raise RuntimeError(f"Camera HTTP not ready at {status_url} after {attempts} attempts")
 
 
+def read_device_endpoint_json(device_ip: str, path: str, timeout: float) -> dict:
+    url, headers = signed_url_and_headers(
+        base_url=f"http://{device_ip}",
+        path=path,
+        method="GET",
+    )
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        body = response.read().decode("utf-8", errors="replace")
+        data = json.loads(body)
+        return data if isinstance(data, dict) else {}
+
+
+def verify_ota_enabled(device_ip: str, retries: int, delay_seconds: float, timeout: float) -> None:
+    """Require ota_enabled=true from at least one known device endpoint."""
+    attempts = max(1, retries)
+    last_errors: list[str] = []
+
+    for attempt in range(1, attempts + 1):
+        for path in ("/health", "/status"):
+            try:
+                data = read_device_endpoint_json(device_ip, path, timeout)
+            except Exception as exc:
+                last_errors.append(f"{path}: {exc}")
+                continue
+
+            ota_enabled = data.get("ota_enabled")
+            if ota_enabled is True:
+                print(f"OTA policy check passed at http://{device_ip}{path} (ota_enabled=true)")
+                return
+
+        if attempt < attempts:
+            time.sleep(delay_seconds)
+
+    details = "; ".join(last_errors[-4:]) if last_errors else "no successful JSON endpoint"
+    raise RuntimeError(
+        "OTA policy check failed: camera does not advertise ota_enabled=true. "
+        f"Device={device_ip}. Checked /health and /status. Details: {details}"
+    )
+
+
 def camera_identity(camera: dict) -> str:
     mac = str(camera.get("mac", "")).strip().lower()
     if mac:
@@ -385,6 +426,11 @@ def main() -> int:
     parser.add_argument("--http-timeout", type=float, default=5.0, help="HTTP timeout in seconds")
     parser.add_argument("--http-retries", type=int, default=12, help="HTTP readiness/config retry attempts")
     parser.add_argument("--http-retry-delay", type=float, default=2.0, help="Seconds between HTTP retries")
+    parser.add_argument(
+        "--allow-no-ota",
+        action="store_true",
+        help="Allow deployment success even if device does not report ota_enabled=true",
+    )
 
     args = parser.parse_args()
 
@@ -490,6 +536,29 @@ def main() -> int:
         flashed_device_mac = extract_mac_from_upload_output((upload_result.stdout or "") + "\n" + (upload_result.stderr or ""))
         if flashed_device_mac:
             print(f"Flashed device MAC: {flashed_device_mac}")
+
+    if not args.no_upload and not args.allow_no_ota:
+        verify_ip = normalize_host_like(args.device_ip) if args.device_ip else None
+        normalized_port = normalize_host_like(args.port) if args.port else None
+
+        if not verify_ip and normalized_port and args.port and is_network_target(args.port):
+            verify_ip = normalized_port
+
+        if not verify_ip:
+            print("No IP provided for OTA policy check; attempting auto-discovery...")
+            verify_ip = auto_discover_device_ip(
+                retries=args.http_retries,
+                delay_seconds=args.http_retry_delay,
+                known_camera_keys=known_camera_keys,
+                expected_mac=flashed_device_mac,
+            )
+
+        verify_ota_enabled(
+            device_ip=verify_ip,
+            retries=args.http_retries,
+            delay_seconds=args.http_retry_delay,
+            timeout=args.http_timeout,
+        )
 
     if config_mode == "props":
         device_ip = normalize_host_like(args.device_ip) if args.device_ip else None

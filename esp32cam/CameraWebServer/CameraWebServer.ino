@@ -2,6 +2,8 @@
 #include <WiFi.h>
 #include <time.h>
 #include <ArduinoOTA.h>
+#include "esp_wifi.h"
+#include "esp_pm.h"
 
 // ===========================
 // Select camera model in board_config.h
@@ -177,6 +179,17 @@ void setup() {
   WiFi.persistent(false);
   wifiStarted = true;
 
+  // Disable WiFi modem sleep at the IDF level (WiFi.setSleep alone is insufficient on Arduino-ESP32 3.x)
+  esp_wifi_set_ps(WIFI_PS_NONE);
+
+  // Lock CPU at 240 MHz and disable automatic light sleep
+  esp_pm_config_esp32_t pm_config = {
+      .max_freq_mhz       = 240,
+      .min_freq_mhz       = 240,
+      .light_sleep_enable = false,
+  };
+  esp_pm_configure(&pm_config);
+
   Serial.print("WiFi connecting to: ");
   Serial.print(ssid);
   Serial.println(" (auto channel)");
@@ -262,7 +275,7 @@ void loop() {
 
   // Handle OTA updates
   ArduinoOTA.handle();
-  delay(10);
+  vTaskDelay(pdMS_TO_TICKS(10));  // yield to scheduler without triggering light sleep
 }
 
 static esp_err_t initCameraWithFallback(camera_config_t *config) {

@@ -10,6 +10,7 @@ from gel_controller.camera_auth import signed_url_and_headers
 HTTP_PORTS = [80, 8080]  # Common ESP32-CAM ports
 TIMEOUT = 1.0
 PROBE_RETRIES = 3
+REQUIRE_OTA = os.getenv("GEL_REQUIRE_OTA", "1").lower() not in {"0", "false", "no"}
 
 
 def detect_local_subnet_24() -> str:
@@ -76,11 +77,11 @@ def scan_subnet():
     subnet = detect_local_subnet_24()
     print(f"Scanning {subnet}...")
     result = subprocess.run(
-        ["nmap", "-sn", "-T5", "--min-rate", "1000", subnet],
+        ["nmap", "-sn", subnet],
         capture_output=True,
         text=True,
         check=True,
-        timeout=30
+        timeout=60
     )
 
     ips = []
@@ -109,6 +110,28 @@ def read_camera_props(ip, port):
         return {}
 
 
+def read_camera_capabilities(ip, port):
+    """Read OTA capability from health/status endpoints if available."""
+    capabilities = {}
+    for path in ("/health", "/status"):
+        try:
+            url, headers = signed_url_and_headers(
+                base_url=f"http://{ip}:{port}",
+                path=path,
+                method="GET",
+            )
+            response = requests.get(url, timeout=TIMEOUT, headers=headers)
+            if response.status_code != 200:
+                continue
+            payload = response.json()
+            if isinstance(payload, dict):
+                capabilities.update(payload)
+        except (requests.RequestException, ValueError):
+            continue
+
+    return capabilities
+
+
 def probe_camera(ip, port):
     """Probe for a GEL camera and return its metadata when identified."""
     for attempt in range(PROBE_RETRIES):
@@ -126,6 +149,7 @@ def probe_camera(ip, port):
                 return None
 
             props = read_camera_props(ip, port)
+            capabilities = read_camera_capabilities(ip, port)
             device_id = response.headers.get("X-Device-ID", "")
             device_name = props.get("name") or response.headers.get("X-Device-Name", f"camera-{ip}")
             room_id = props.get("room_id") or response.headers.get("X-Room-ID", "unknown")
@@ -146,6 +170,7 @@ def probe_camera(ip, port):
                 "cam_mode": cam_mode,
                 "location": location,
                 "poll_interval": poll_interval,
+                "ota_enabled": bool(capabilities.get("ota_enabled", False)),
                 "url": f"http://{ip}:{port}",
                 "stream_url": f"http://{ip}:81/stream",
             }
@@ -164,6 +189,7 @@ def discover_cameras():
     """Scan network for gel cameras"""
     cameras = []
     scanned_ips = scan_subnet()
+    print(f"Found {scanned_ips} active IPs. Probing for cameras...")
 
     with reduced_privileges_when_possible():
         for ip in scanned_ips:
@@ -172,9 +198,16 @@ def discover_cameras():
             for port in HTTP_PORTS:
                 camera = probe_camera(ip, port)
                 if camera:
+                    if REQUIRE_OTA and not camera.get("ota_enabled", False):
+                        print(
+                            f"  ! Camera at {camera['ip']} rejected: ota_enabled=false "
+                            "(set GEL_REQUIRE_OTA=0 to allow)"
+                        )
+                        break
+
                     print(
                         f"  ✓ Camera found! MAC: {camera['mac']}, Name: {camera['name']}, "
-                        f"Room: {camera['room_id']}, Mode: {camera['cam_mode']}"
+                        f"Room: {camera['room_id']}, Mode: {camera['cam_mode']}, OTA: {camera['ota_enabled']}"
                     )
                     cameras.append(camera)
                     break  # Found it, no need to check other ports

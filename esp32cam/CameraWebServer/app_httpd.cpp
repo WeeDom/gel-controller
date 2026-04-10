@@ -1110,6 +1110,7 @@ static esp_err_t status_handler(httpd_req_t *req) {
 #else
   p += sprintf(p, ",\"led_intensity\":%d", -1);
 #endif
+  p += sprintf(p, ",\"ota_enabled\":true");
   *p++ = '}';
   *p++ = 0;
   httpd_resp_set_type(req, "application/json");
