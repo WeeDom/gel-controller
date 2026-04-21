@@ -20,6 +20,7 @@
 #include "sdkconfig.h"
 #include "camera_index.h"
 #include "board_config.h"
+#include "../../firmware_common/gel_firmware_shared.h"
 #include <WiFi.h>
 #include <string.h>
 #include <vector>
@@ -981,6 +982,7 @@ static esp_err_t status_handler(httpd_req_t *req) {
 #else
   p += sprintf(p, ",\"led_intensity\":%d", -1);
 #endif
+  p += sprintf(p, ",\"ota_enabled\":%s", GEL_OTA_ENABLED ? "true" : "false");
   *p++ = '}';
   *p++ = 0;
   httpd_resp_set_type(req, "application/json");
