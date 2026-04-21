@@ -20,7 +20,7 @@
 #include "sdkconfig.h"
 #include "camera_index.h"
 #include "board_config.h"
-#include "../../firmware_common/gel_firmware_shared.h"
+#define GEL_OTA_ENABLED true
 #include <WiFi.h>
 #include <string.h>
 #include <vector>
