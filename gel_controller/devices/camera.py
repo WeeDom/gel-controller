@@ -193,9 +193,9 @@ def read_camera_props(ip, port):
 
 
 def read_camera_capabilities(ip, port):
-    """Read OTA capability from health/status endpoints if available."""
+    """Read OTA capability from /status payload for room cameras."""
     capabilities = {}
-    for path in ("/health", "/status"):
+    for path in ("/status",):
         try:
             url, headers = signed_url_and_headers(
                 base_url=f"http://{ip}:{port}",
@@ -250,7 +250,14 @@ def probe_camera(ip, port):
             room_id = props.get("room_id") or identity_headers.get("X-Room-ID", "unknown")
             cam_mode = props.get("cam_mode") or identity_headers.get("X-Cam-Mode", "room")
             firmware_version = capabilities.get("firmware_version") or identity_headers.get("X-Firmware-Version", "unknown")
-            ota_enabled = normalize_ota_flag(capabilities.get("ota_enabled"))
+            # Prefer the probe-time /status payload when available.
+            ota_enabled = normalize_ota_flag((status_payload or {}).get("ota_enabled"))
+            if ota_enabled is None:
+                ota_enabled = normalize_ota_flag(capabilities.get("ota_enabled"))
+            if REQUIRE_OTA and ota_enabled is None:
+                if attempt < PROBE_RETRIES - 1:
+                    time.sleep(0.2)
+                    continue
             location = props.get("location", "unknown")
             poll_interval = props.get("poll_interval", 10.0)
             try:
