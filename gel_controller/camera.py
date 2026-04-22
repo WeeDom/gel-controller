@@ -79,6 +79,29 @@ class Camera:
         self.stream_url = stream_url
         self._port = port
         self._supports_control = True
+        self._capture_consecutive_failures = 0
+        self._capture_cooldown_until = 0.0
+
+    def _capture_circuit_open(self) -> bool:
+        return time.time() < self._capture_cooldown_until
+
+    def _record_capture_success(self) -> None:
+        self._capture_consecutive_failures = 0
+        self._capture_cooldown_until = 0.0
+
+    def _record_capture_failure(self, reason: str) -> None:
+        self._capture_consecutive_failures += 1
+        threshold = max(1, int(os.getenv("GEL_CAMERA_CAPTURE_FAILURE_THRESHOLD", "1")))
+        if self._capture_consecutive_failures < threshold:
+            return
+
+        cooldown_seconds = max(5.0, float(os.getenv("GEL_CAMERA_CAPTURE_COOLDOWN_SECONDS", "90")))
+        self._capture_cooldown_until = time.time() + cooldown_seconds
+        logger.warning(
+            f"Capture circuit opened for {self._name} after {self._capture_consecutive_failures} failures "
+            f"({reason}); skipping captures for {cooldown_seconds:.0f}s"
+        )
+        self._capture_consecutive_failures = 0
 
     # Name property
     @property
@@ -186,6 +209,13 @@ class Camera:
             logger.warning(f"Camera {self._name} has no IP; skipping capture")
             return None
 
+        if self._capture_circuit_open():
+            remaining = max(0.0, self._capture_cooldown_until - time.time())
+            logger.warning(
+                f"Skipping capture for {self._name}: cooldown active for another {remaining:.1f}s"
+            )
+            return None
+
         import requests
 
         capture_dir = Path("captures")
@@ -242,7 +272,7 @@ class Camera:
                 try:
                     response = requests.get(
                         capture_url,
-                        timeout=(5, 25),
+                        timeout=(5, 180),
                         headers=capture_headers,
                     )
 
@@ -251,9 +281,11 @@ class Camera:
                         filename.write_bytes(response.content)
                         logger.info(f"✓ Saved capture to {filename}")
                         self.capture_count += 1
+                        self._record_capture_success()
                         return filename
 
                     logger.error(f"Failed to capture from {self._name}: HTTP {response.status_code}")
+                    self._record_capture_failure(f"http_{response.status_code}")
                     return None
 
                 except (requests.exceptions.ChunkedEncodingError, IncompleteRead) as e:
@@ -261,6 +293,7 @@ class Camera:
                         logger.error(
                             f"Error capturing from {self._name}: incomplete response after {attempt} attempts: {e}"
                         )
+                        self._record_capture_failure("incomplete_response")
                         return None
 
                     logger.warning(
@@ -271,6 +304,7 @@ class Camera:
                 except requests.exceptions.RequestException as e:
                     if attempt >= max_capture_attempts:
                         logger.error(f"Error capturing from {self._name}: {e}")
+                        self._record_capture_failure("request_exception")
                         return None
 
                     logger.warning(
@@ -281,6 +315,7 @@ class Camera:
             return None
         except Exception as e:
             logger.error(f"Error capturing from {self._name}: {e}")
+            self._record_capture_failure("unexpected_exception")
             return None
 
     def output_status(self) -> None:
