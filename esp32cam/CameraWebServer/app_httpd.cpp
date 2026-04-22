@@ -20,6 +20,7 @@
 #include "sdkconfig.h"
 #include "camera_index.h"
 #include "board_config.h"
+#include "firmware_version.h"
 #define GEL_OTA_ENABLED true
 #include <WiFi.h>
 #include <string.h>
@@ -915,7 +916,7 @@ static esp_err_t status_handler(httpd_req_t *req) {
   if (!authorize_request(req)) {
     return ESP_FAIL;
   }
-  static char json_response[1024];
+  static char json_response[1152];
 
   sensor_t *s = esp_camera_sensor_get();
   char *p = json_response;
@@ -983,6 +984,7 @@ static esp_err_t status_handler(httpd_req_t *req) {
   p += sprintf(p, ",\"led_intensity\":%d", -1);
 #endif
   p += sprintf(p, ",\"ota_enabled\":%s", GEL_OTA_ENABLED ? "true" : "false");
+  p += sprintf(p, ",\"firmware_version\":\"%s\"", GEL_FIRMWARE_VERSION);
   *p++ = '}';
   *p++ = 0;
   httpd_resp_set_type(req, "application/json");
@@ -1172,6 +1174,7 @@ static esp_err_t index_handler(httpd_req_t *req) {
   httpd_resp_set_type(req, "text/html");
   httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
   httpd_resp_set_hdr(req, "X-Device-Type", "gel-camera");
+  httpd_resp_set_hdr(req, "X-Firmware-Version", GEL_FIRMWARE_VERSION);
   httpd_resp_set_hdr(req, "X-Device-Name", device_name);
   httpd_resp_set_hdr(req, "X-Room-ID", room_id);
   httpd_resp_set_hdr(req, "X-Device-ID", device_mac);
@@ -1198,6 +1201,7 @@ static esp_err_t index_head_handler(httpd_req_t *req) {
   httpd_resp_set_type(req, "text/html");
   httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
   httpd_resp_set_hdr(req, "X-Device-Type", "gel-camera");
+  httpd_resp_set_hdr(req, "X-Firmware-Version", GEL_FIRMWARE_VERSION);
   httpd_resp_set_hdr(req, "X-Device-ID", device_mac);
   httpd_resp_set_hdr(req, "X-Device-Name", device_name);
   httpd_resp_set_hdr(req, "X-Room-ID", room_id);
