@@ -62,7 +62,7 @@ class PersonDetector:
         self._heartbeat_sensor_key: Optional[int] = None
         self._presence_sensor_key: Optional[int] = None
         self._presence_detected: bool = False
-        self._presence_confirmed_timeout: float = 60.0  # seconds after both signals clear before declaring empty
+        self._presence_confirmed_timeout: float = 120.0  # seconds after both signals clear before declaring empty
         self._presence_cleared_at: Optional[float] = None
         self._empty_confirm_timer: Optional[threading.Timer] = None
         self._disconnect_event: Optional[asyncio.Event] = None

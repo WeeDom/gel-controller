@@ -4,6 +4,7 @@ Camera - Represents a camera device that monitors a room.
 
 import logging
 import time
+import os
 from datetime import datetime
 from http.client import IncompleteRead
 from typing import Optional, TYPE_CHECKING
@@ -195,30 +196,40 @@ class Camera:
 
         max_capture_attempts = 3
         retry_delay_seconds = 0.75
+        configured_framesize = os.getenv("GEL_CAPTURE_FRAMESIZE", "").strip()
 
         try:
-            if self._supports_control:
-                control_url, control_headers = signed_url_and_headers(
-                    base_url=base_url,
-                    path="/control",
-                    method="GET",
-                    params={"var": "framesize", "val": 15},
-                    extra_headers={'User-Agent': 'GEL-Controller/1.0'},
-                )
-                control_response = requests.get(
-                    control_url,
-                    timeout=(3, 5),
-                    headers=control_headers,
-                )
-                if control_response.status_code == 401:
-                    self._supports_control = False
+            if self._supports_control and configured_framesize:
+                try:
+                    framesize_value = int(configured_framesize)
+                except ValueError:
                     logger.warning(
-                        f"Failed to set framesize on {self._name}: HTTP 401; disabling control calls and continuing with capture"
+                        f"Invalid GEL_CAPTURE_FRAMESIZE='{configured_framesize}' for {self._name}; skipping control call"
                     )
-                elif control_response.status_code != 200:
-                    logger.warning(
-                        f"Failed to set framesize on {self._name}: HTTP {control_response.status_code}; continuing with capture"
+                    framesize_value = None
+
+                if framesize_value is not None:
+                    control_url, control_headers = signed_url_and_headers(
+                        base_url=base_url,
+                        path="/control",
+                        method="GET",
+                        params={"var": "framesize", "val": framesize_value},
+                        extra_headers={'User-Agent': 'GEL-Controller/1.0'},
                     )
+                    control_response = requests.get(
+                        control_url,
+                        timeout=(3, 5),
+                        headers=control_headers,
+                    )
+                    if control_response.status_code == 401:
+                        self._supports_control = False
+                        logger.warning(
+                            f"Failed to set framesize on {self._name}: HTTP 401; disabling control calls and continuing with capture"
+                        )
+                    elif control_response.status_code != 200:
+                        logger.warning(
+                            f"Failed to set framesize on {self._name}: HTTP {control_response.status_code}; continuing with capture"
+                        )
 
             capture_url, capture_headers = signed_url_and_headers(
                 base_url=base_url,
