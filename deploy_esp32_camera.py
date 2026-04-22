@@ -160,7 +160,10 @@ def post_props(device_ip: str, name: str, room_id: str, location: str, poll_inte
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Compile/upload ESP32 camera firmware and configure camera metadata over /props.",
+        description=(
+            "Compile/upload ESP32 camera firmware and configure camera metadata over /props. "
+            "Use this instead of Arduino IDE so the board target stays on AI Thinker ESP32-CAM."
+        ),
     )
     parser.add_argument("--arduino-cli", default="arduino-cli", help="Path to arduino-cli executable")
     parser.add_argument(
@@ -168,7 +171,11 @@ def main() -> int:
         default="esp32cam/CameraWebServer",
         help="Path to sketch directory or .ino file",
     )
-    parser.add_argument("--fqbn", default="esp32:esp32:esp32cam", help="Board FQBN")
+    parser.add_argument(
+        "--fqbn",
+        default="esp32:esp32:esp32cam",
+        help="Board FQBN (default is AI Thinker ESP32-CAM; do not use ESP32 Dev Module for these cameras)",
+    )
     parser.add_argument(
         "--build-dir",
         default=".arduino-build/esp32cam",

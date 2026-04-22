@@ -3,13 +3,18 @@
 ## 📦 Build Environment
 | Component | Version | Notes |
 |------------|----------|-------|
-| **Arduino IDE** | 1.8.19 | Stable legacy IDE, preferred for ESP32-CAM builds |
+| **arduino-cli** | Current repo workflow | Preferred. Keeps the board target fixed to `esp32:esp32:esp32cam` and avoids Arduino IDE misconfiguration |
 | **ESP32 Arduino Core** | 2.0.14 | Tested and verified (Espressif official) |
-| **Board Definition** | AI Thinker ESP32-CAM | Configured under *Tools → Board → ESP32 Arduino → AI Thinker ESP32-CAM* |
+| **Board Definition** | AI Thinker ESP32-CAM | Required. In `arduino-cli` this is `--fqbn esp32:esp32:esp32cam` |
 | **Upload Speed** | 115200 baud | Reliable for all boards tested |
 | **Flash Mode** | QIO | Default for AI-Thinker module |
 | **Flash Frequency** | 40 MHz | Default and stable |
 | **Partition Scheme** | Default 4MB with spiffs (1.2MB APP/1.5MB SPIFFS) | **Changed from "Huge APP" to enable OTA** |
+
+## Critical Rule
+Arduino IDE sucks. Don't use it for these boards.
+
+We lost time because Arduino IDE silently flashed a camera as `ESP32 Dev Module` with PSRAM disabled instead of `AI Thinker ESP32-CAM`. The firmware built, booted, and then failed in confusing ways on Wi-Fi. Use the repo scripts or `arduino-cli` directly so the target stays fixed.
 
 ---
 

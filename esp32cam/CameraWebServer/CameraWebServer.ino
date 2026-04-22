@@ -37,6 +37,17 @@ const char* wifiStatusToString(wl_status_t status) {
   }
 }
 
+void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+  if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
+    Serial.printf("WiFi event: STA_CONNECTED ch=%d authmode=%d\n",
+                  info.wifi_sta_connected.channel,
+                  info.wifi_sta_connected.authmode);
+  } else if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+    Serial.printf("WiFi event: STA_DISCONNECTED reason=%d\n",
+                  info.wifi_sta_disconnected.reason);
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.setDebugOutput(true);
@@ -75,8 +86,9 @@ void setup() {
   if (config.pixel_format == PIXFORMAT_JPEG) {
     if (psramFound()) {
       config.jpeg_quality = 10;
-      config.fb_count = 2;
-      config.grab_mode = CAMERA_GRAB_LATEST;
+      // Keep only one frame buffer to preserve internal heap for Wi-Fi/OTA tasks.
+      config.fb_count = 1;
+      config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
     } else {
       // Limit the frame size when PSRAM is not available
       config.frame_size = FRAMESIZE_SVGA;
@@ -144,14 +156,17 @@ void setup() {
     Serial.print(WiFi.channel(i));
     Serial.println(WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? " [OPEN]" : " [SECURED]");
   }
+  // Release scan result buffers; otherwise they can consume scarce heap.
+  WiFi.scanDelete();
   Serial.println("");
 
-  WiFi.begin(ssid, password, 11);
+  WiFi.onEvent(onWiFiEvent);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
   WiFi.setSleep(false);
 
   Serial.print("WiFi connecting to: ");
-  Serial.print(ssid);
-  Serial.println(" on channel 11");
+  Serial.println(ssid);
   while (WiFi.status() != WL_CONNECTED) {
     Serial.print("\nStatus: ");
     Serial.print(wifiStatusToString(WiFi.status()));
@@ -160,6 +175,22 @@ void setup() {
   }
   Serial.println("");
   Serial.println("WiFi connected");
+  Serial.print("WiFi BSSID: ");
+  Serial.println(WiFi.BSSIDstr());
+  Serial.print("WiFi RSSI: ");
+  Serial.println(WiFi.RSSI());
+  Serial.print("WiFi channel: ");
+  Serial.println(WiFi.channel());
+  Serial.print("STA MAC: ");
+  Serial.println(WiFi.macAddress());
+  Serial.print("IP: ");
+  Serial.println(WiFi.localIP());
+  Serial.print("Gateway: ");
+  Serial.println(WiFi.gatewayIP());
+  Serial.print("Subnet: ");
+  Serial.println(WiFi.subnetMask());
+  Serial.print("DNS: ");
+  Serial.println(WiFi.dnsIP());
 
   // Initialize and get the time
   Serial.println("Initializing time...");
@@ -220,7 +251,47 @@ void setup() {
 }
 
 void loop() {
+  static unsigned long last_reconnect_attempt_ms = 0;
+  static unsigned long last_radio_reset_ms = 0;
+  static wl_status_t last_status = WL_IDLE_STATUS;
+
+  wl_status_t current = WiFi.status();
+  if (current != last_status) {
+    Serial.print("WiFi status changed: ");
+    Serial.println(wifiStatusToString(current));
+    last_status = current;
+  }
+
+  if (current != WL_CONNECTED) {
+    unsigned long now = millis();
+    bool allow_hard_reset = (now - last_radio_reset_ms) >= 20000;
+    bool should_hard_reset = allow_hard_reset &&
+                             (current == WL_CONNECTION_LOST ||
+                              current == WL_CONNECT_FAILED ||
+                              current == WL_NO_SSID_AVAIL);
+
+    if (should_hard_reset) {
+      Serial.println("WiFi stuck; cycling radio and rejoining AP...");
+      WiFi.disconnect(true, true);
+      delay(100);
+      WiFi.mode(WIFI_OFF);
+      delay(200);
+      WiFi.mode(WIFI_STA);
+      WiFi.setSleep(false);
+      WiFi.begin(ssid, password);
+      last_radio_reset_ms = now;
+      last_reconnect_attempt_ms = now;
+    } else if (current != WL_IDLE_STATUS && (now - last_reconnect_attempt_ms >= 5000)) {
+      Serial.println("WiFi not connected, retrying association...");
+      WiFi.reconnect();
+      last_reconnect_attempt_ms = now;
+    }
+  } else {
+    last_reconnect_attempt_ms = millis();
+  }
+
   // Handle OTA updates
   ArduinoOTA.handle();
+
   delay(10);
 }

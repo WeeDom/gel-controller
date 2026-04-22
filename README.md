@@ -82,6 +82,10 @@ Successful baseline captures are recorded in SQLite at `logs/baselines.db` in ta
 
 ### Build/flash ESP32 camera without Arduino GUI
 
+Headline: Arduino IDE sucks. Don't use it.
+
+Use the scripted path so the board target stays correct. The working target for these cameras is `AI Thinker ESP32-CAM` with PSRAM enabled, which maps to `esp32:esp32:esp32cam` in `arduino-cli`. Using Arduino IDE made it too easy to accidentally flash as `ESP32 Dev Module`, which produced broken Wi-Fi behavior.
+
 Use the headless deploy helper (requires `arduino-cli`):
 
 ```bash
@@ -99,6 +103,8 @@ This will:
 3. Configure `/props` on the camera with `name`, `room_id`, `location` (and optional `--poll-interval`)
 
 By default, compile uses `PartitionScheme=min_spiffs` (OTA-capable).
+
+If you need to compile or upload manually, use the scripts in `esp32cam/utils/` rather than Arduino IDE.
 
 Useful flags:
 - `--no-upload` compile only
