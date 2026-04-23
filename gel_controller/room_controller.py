@@ -3,6 +3,7 @@ RoomController - Orchestrates multiple rooms with cameras and person detectors.
 """
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 import re
 import threading
@@ -66,6 +67,13 @@ class RoomController:
         self._camera_discovery_interval = float(os.getenv("CAMERA_DISCOVERY_INTERVAL", "300"))  # seconds
         self._running_camera_keys: set = set()  # MAC or IP of cameras with live threads
         self._running_camera_keys_lock = threading.Lock()
+        self._control_job_workers = max(1, int(os.getenv("GEL_CONTROL_JOB_WORKERS", "1")))
+        self._control_jobs_executor = ThreadPoolExecutor(
+            max_workers=self._control_job_workers,
+            thread_name_prefix="ControlJob",
+        )
+        self._control_jobs: Dict[str, Dict[str, object]] = {}
+        self._control_jobs_lock = threading.Lock()
         self._init_baseline_db()
 
     def get_rooms(self) -> List['Room']:
@@ -155,6 +163,69 @@ class RoomController:
         logger.info(f"Started {len(self._threads)} thread(s)")
 
     def capture_baseline(self, room_id: Optional[str] = None) -> Dict[str, object]:
+        """Backward-compatible blocking baseline capture."""
+        return self._capture_baseline_sync(room_id=room_id)
+
+    def enqueue_capture_baseline(self, room_id: Optional[str] = None) -> Dict[str, object]:
+        """Queue baseline capture as a background job and return immediately."""
+        job_id = str(uuid.uuid4())
+        created_at = datetime.now().isoformat()
+        job = {
+            "ok": True,
+            "job_id": job_id,
+            "job_type": "capture_baseline",
+            "status": "queued",
+            "room_id": room_id,
+            "created_at": created_at,
+            "started_at": None,
+            "completed_at": None,
+            "result": None,
+            "error": None,
+        }
+        with self._control_jobs_lock:
+            self._control_jobs[job_id] = job
+
+        self._control_jobs_executor.submit(self._run_capture_baseline_job, job_id, room_id)
+        return dict(job)
+
+    def get_control_job(self, job_id: str) -> Dict[str, object]:
+        """Return control job status/result by job id."""
+        with self._control_jobs_lock:
+            job = self._control_jobs.get(job_id)
+            if job is None:
+                return {"ok": False, "error": "job_not_found", "job_id": job_id}
+            return {"ok": True, **dict(job)}
+
+    def _run_capture_baseline_job(self, job_id: str, room_id: Optional[str]) -> None:
+        started_at = datetime.now().isoformat()
+        with self._control_jobs_lock:
+            job = self._control_jobs.get(job_id)
+            if job is None:
+                return
+            job["status"] = "running"
+            job["started_at"] = started_at
+
+        try:
+            result = self._capture_baseline_sync(room_id=room_id)
+            completed_at = datetime.now().isoformat()
+            with self._control_jobs_lock:
+                job = self._control_jobs.get(job_id)
+                if job is None:
+                    return
+                job["status"] = "completed" if result.get("ok") else "failed"
+                job["completed_at"] = completed_at
+                job["result"] = result
+        except Exception as exc:
+            completed_at = datetime.now().isoformat()
+            with self._control_jobs_lock:
+                job = self._control_jobs.get(job_id)
+                if job is None:
+                    return
+                job["status"] = "failed"
+                job["completed_at"] = completed_at
+                job["error"] = str(exc)
+
+    def _capture_baseline_sync(self, room_id: Optional[str] = None) -> Dict[str, object]:
         """
         Trigger immediate baseline image capture.
 
@@ -837,6 +908,7 @@ class RoomController:
         self._running = False
         self._shutdown_event.set()
         self._stop_control_server()
+        self._control_jobs_executor.shutdown(wait=False, cancel_futures=True)
 
         # Wait for all threads to finish
         for thread in self._threads:

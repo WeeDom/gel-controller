@@ -29,6 +29,12 @@ class ControlAPIController(Protocol):
     def capture_baseline(self, room_id: Optional[str] = None) -> Dict[str, object]:
         ...
 
+    def enqueue_capture_baseline(self, room_id: Optional[str] = None) -> Dict[str, object]:
+        ...
+
+    def get_control_job(self, job_id: str) -> Dict[str, object]:
+        ...
+
     def analyze_latest(self, room_id: Optional[str] = None) -> Dict[str, object]:
         ...
 
@@ -85,11 +91,25 @@ class ControlAPIServer:
 
         @app.post("/capture-baseline")
         @app.post("/api/v1/capture-baseline")
-        def capture_baseline(payload: Optional[RoomRequest] = None) -> JSONResponse:
+        def capture_baseline(payload: Optional[RoomRequest] = None, wait: bool = False) -> JSONResponse:
             room_id = payload.room_id if payload is not None else None
-            result = self._controller.capture_baseline(room_id=room_id)
-            http_status = 200 if result.get("ok") else 404
+            if wait:
+                result = self._controller.capture_baseline(room_id=room_id)
+                http_status = 200 if result.get("ok") else 404
+            else:
+                result = self._controller.enqueue_capture_baseline(room_id=room_id)
+                http_status = 202 if result.get("ok") else 500
             return JSONResponse(content=result, status_code=http_status)
+
+        @app.get("/api/v1/jobs/{job_id}")
+        def get_job(job_id: str) -> JSONResponse:
+            result = self._controller.get_control_job(job_id=job_id)
+            if not result.get("ok"):
+                return JSONResponse(content=result, status_code=404)
+            status = result.get("status")
+            if status in {"queued", "running"}:
+                return JSONResponse(content=result, status_code=202)
+            return JSONResponse(content=result, status_code=200)
 
         @app.post("/analyze-latest")
         @app.post("/api/v1/analyze-latest")
