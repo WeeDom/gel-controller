@@ -57,6 +57,7 @@ class RoomController:
         self._control_host = os.getenv("GEL_CONTROL_HOST", "0.0.0.0")
         self._control_port = 8765
         self._baseline_db_path = Path("logs") / "baselines.db"
+        self._log_file_path = Path(os.getenv("GEL_LOG_FILE", str(Path("logs") / "gel.log")))
         self._spot_diff_enabled = os.getenv("ENABLE_SPOT_THE_DIFF", "1").lower() not in {"0", "false", "no"}
         self._spot_diff_model = os.getenv("SPOT_THE_DIFF_MODEL", "claude-opus-4-5-20251101")
         self._spot_diff_logs_dir = Path("logs") / "spot_the_diff"
@@ -490,6 +491,53 @@ class RoomController:
         if lines <= 0:
             return []
         return content[-lines:]
+
+    def get_log_entries(self, cursor: Optional[int] = None, limit_bytes: int = 65536) -> Dict[str, object]:
+        """Return log text from a byte cursor for browser-side log following."""
+        path = self._log_file_path
+        if not path.exists():
+            return {
+                "ok": True,
+                "lines": [],
+                "cursor": 0,
+                "next_cursor": 0,
+                "file_size": 0,
+                "rotated": False,
+                "truncated": False,
+            }
+
+        limit = max(1024, min(int(limit_bytes or 65536), 262144))
+        file_size = path.stat().st_size
+        rotated = False
+
+        if cursor is None:
+            start = max(0, file_size - limit)
+            truncated = start > 0
+        else:
+            start = max(0, int(cursor))
+            if start > file_size:
+                start = 0
+                rotated = True
+            truncated = False
+
+        with path.open("rb") as handle:
+            handle.seek(start)
+            data = handle.read(limit)
+            next_cursor = handle.tell()
+
+        if next_cursor < file_size:
+            truncated = True
+
+        text = data.decode("utf-8", errors="replace")
+        return {
+            "ok": True,
+            "lines": text.splitlines(),
+            "cursor": start,
+            "next_cursor": next_cursor,
+            "file_size": file_size,
+            "rotated": rotated,
+            "truncated": truncated,
+        }
 
     def _analyze_event(self, room: 'Room', event_number: Optional[int], captured_files: List[Path]) -> None:
         """Run one composite spot-the-diff analysis for all cameras in one occupancy event."""

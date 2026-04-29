@@ -44,6 +44,9 @@ class ControlAPIController(Protocol):
     def get_image_bytes(self, filename: str) -> Optional[bytes]:
         ...
 
+    def get_log_entries(self, cursor: Optional[int] = None, limit_bytes: int = 65536) -> Dict[str, object]:
+        ...
+
     def on_breakbeam_trigger(self, sensor_id: str, room_id: str, beam_broken: bool) -> Dict[str, object]:
         ...
 
@@ -85,9 +88,18 @@ class ControlAPIServer:
         @app.get("/status")
         @app.get("/api/v1/status")
         def status() -> JSONResponse:
-            result = self._controller.get_status(include_logs=True)
+            result = self._controller.get_status(include_logs=False)
             http_status = 200 if result.get("ok") else 500
             return JSONResponse(content=result, status_code=http_status)
+
+        @app.get("/logs")
+        @app.get("/api/v1/logs")
+        def logs(cursor: Optional[int] = None, limit_bytes: int = 65536) -> JSONResponse:
+            result = self._controller.get_log_entries(
+                cursor=cursor,
+                limit_bytes=limit_bytes,
+            )
+            return JSONResponse(content=result, status_code=200 if result.get("ok") else 500)
 
         @app.post("/capture-baseline")
         @app.post("/api/v1/capture-baseline")

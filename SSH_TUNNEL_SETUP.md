@@ -143,3 +143,36 @@ Verify from container:
 ```bash
 docker compose exec web curl -sS http://host.docker.internal:20001/status
 ```
+
+## Controller Log Rotation
+
+`gel.py` writes controller logs to a stable file, `logs/gel.log`, so the host can
+rotate it with logrotate. The Python process uses a watched file handler, so it
+will reopen the file after logrotate renames and recreates it.
+
+Install the provided logrotate policy on the controller host:
+
+```bash
+sudo install -m 0644 bin/logrotate-gel-controller /etc/logrotate.d/gel-controller
+```
+
+For the production service user/path from `bin/gel.service`, the policy rotates:
+
+```text
+/home/gel/gel-controller/logs/gel.log
+```
+
+If the controller runs from a different checkout or user, edit that path and the
+`create 0640 gel gel` owner/group in `/etc/logrotate.d/gel-controller`.
+
+Test the policy without rotating:
+
+```bash
+sudo logrotate -d /etc/logrotate.d/gel-controller
+```
+
+Force one rotation during setup:
+
+```bash
+sudo logrotate -f /etc/logrotate.d/gel-controller
+```

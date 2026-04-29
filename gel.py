@@ -4,8 +4,8 @@ import os
 import signal
 import sys
 import logging
+from logging.handlers import WatchedFileHandler
 from time import sleep
-from datetime import datetime
 from pathlib import Path
 
 
@@ -36,15 +36,16 @@ from gel_controller.registration import ensure_registered
 log_dir = Path("logs")
 log_dir.mkdir(exist_ok=True)
 
-# Generate log filename with timestamp
-log_file = log_dir / f"gel-{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+# Use a stable filename so external log rotation can manage it.
+log_file = Path(os.getenv("GEL_LOG_FILE", str(log_dir / "gel.log")))
+log_file.parent.mkdir(parents=True, exist_ok=True)
 
 # Configure logging to both file and console
 logging.basicConfig(
     level=logging.INFO,  # Capture everything
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(log_file),
+        WatchedFileHandler(log_file),
         logging.StreamHandler(sys.stdout)
     ]
 )
